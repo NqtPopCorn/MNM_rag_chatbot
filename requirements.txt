@@ -1,0 +1,9 @@
+langchain-text-splitters
+langchain-community
+langchain-core
+faiss-cpu
+unstructured 
+pypdf
+unstructured[pdf]
+chromadb
+langchain-google-genai  

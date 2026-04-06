@@ -1,0 +1,8 @@
+.env
+chroma_db_gemini/
+faiss_db_gemini/
+__pycache__/
+*.pyc
+
+# Virtual env
+myenv
