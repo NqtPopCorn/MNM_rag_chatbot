@@ -7,3 +7,4 @@ pypdf
 unstructured[pdf]
 chromadb
 langchain-google-genai  
+streamlit

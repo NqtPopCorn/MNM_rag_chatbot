@@ -266,11 +266,18 @@ mkdir papers
 # copy file PDF của bạn vào thư mục papers/
 ```
 
----
-
 ## 6. Hướng dẫn chạy dự án
 
-### Cách A — Chạy từng bước (khuyến nghị cho production)
+### Cách A (Recommended) — Chạy UI streamlit
+
+Đây là cách được khuyến nghị vì nó cung cấp giao diện Web (GUI) trực quan, cho phép bạn dễ dàng tải lên file PDF, điều chỉnh thông số cắt chữ (Chunking) và chat trực tiếp mà không cần thao tác với code.
+
+```bash
+streamlit run app.py
+```
+
+
+### Cách B — Chạy từng bước
 
 **Bước 1:** Xây dựng Vector Database từ PDF
 
@@ -291,7 +298,7 @@ Output mong đợi:
 
 > Bước này chỉ cần chạy **một lần**, hoặc khi bạn thêm/xóa PDF mới.
 
-**Bước 2:** Chạy chatbot hỏi đáp
+**Bước 2:** Chạy chatbot hỏi đáp (terminal)
 
 ```bash
 python chat.py
@@ -314,7 +321,7 @@ Gõ `exit` hoặc `quit` để thoát.
 
 ---
 
-### Cách B — Chạy all-in-one (dùng để học)
+### Cách C — Chạy all-in-one (dùng để học)
 
 ```bash
 python all_in_one.py
