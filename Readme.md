@@ -99,6 +99,7 @@ rag-project/
 ├── all_in_one.py            # File học — toàn bộ pipeline trong 1 file
 ├── build_db.py              # Bước 1: Đọc PDF → Tạo Vector DB
 ├── chat.py                  # Bước 2: Load DB → Chatbot hỏi đáp
+├── app.py                   # streamlit app
 │
 ├── .env                     # Biến môi trường (API key) — KHÔNG commit lên git
 ├── .env.example             # Mẫu file .env
@@ -271,6 +272,8 @@ mkdir papers
 ### Cách A (Recommended) — Chạy UI streamlit
 
 Đây là cách được khuyến nghị vì nó cung cấp giao diện Web (GUI) trực quan, cho phép bạn dễ dàng tải lên file PDF, điều chỉnh thông số cắt chữ (Chunking) và chat trực tiếp mà không cần thao tác với code.
+
+> Note: Thực hiện load db trước để có context trước khi hỏi demo, hoặc upload file pdf, md để bắt đầu.
 
 ```bash
 streamlit run app.py
