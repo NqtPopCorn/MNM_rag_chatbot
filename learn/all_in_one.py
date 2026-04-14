@@ -14,7 +14,7 @@ loader = DirectoryLoader(
     glob="**/*.pdf",
     loader_cls=UnstructuredFileLoader,
     show_progress=True,
-    use_multithreading=True
+    use_multithreading=True # tăng tốc độ load nhiều file
 )
 
 doc = loader.load()
@@ -32,11 +32,11 @@ MARKDOWN_SEPARATORS = [
 ]
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1200,
-    chunk_overlap=200,
-    add_start_index=True,
-    strip_whitespace=True,
-    separators=MARKDOWN_SEPARATORS
+    chunk_size=1200, # kích thước tối đa mỗi chunk
+    chunk_overlap=200, # số lượng kí tự chồng lặp giữa các chunk, giúp giữ ngữ cảnh liên tục
+    add_start_index=True, # thêm metadata để dẫn nguồn truy xuất
+    strip_whitespace=True, # loại bỏ khoảng trắng thừa
+    separators=MARKDOWN_SEPARATORS # kí tự phân tách các chunk, ưu tiên theo index 0->n
 )
 
 splits = text_splitter.split_documents(doc)
@@ -56,9 +56,10 @@ vectorstore = Chroma.from_documents(
 )
 print("Hoàn tất!")
 
+# QUICK TEST: Tìm kiếm tương đồng (similarity search) với câu hỏi mẫu
 # query = "Nội dung chính của tài liệu này là gì?"
-# short-hand thay vì phải thêm một dòng embedding query
-# results = vectorstore.similarity_search(query, k=2)
+# results = vectorstore.similarity_search(query, k=2) # short-hand thay vì phải tự tạo embedding query
+# ----------------------------------------------------
 
 retriver = vectorstore.as_retriever(
     # chỉ lấy những chunk có điểm tương đồng ở ngưỡng tự quy định
@@ -86,7 +87,7 @@ llm = ChatGoogleGenerativeAI(
 )
 
 rag_chain = (
-    {'context': retriver, "question": RunnablePassthrough()}
+    {'context': retriver, "question": RunnablePassthrough()} # lấy parameter gắn vào question
     | promt
     | llm
     | StrOutputParser()

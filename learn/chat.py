@@ -51,7 +51,7 @@ def main():
     print("2. Đang khởi tạo Gemini LLM...")
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash-lite",
-        temperature=0.1
+        temperature=0.1 # càng thấp càng bám sát nội dung tài liệu.
     )
 
     # 5. Tạo Chain bằng LCEL (LangChain Expression Language)
