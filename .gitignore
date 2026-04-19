@@ -1,6 +1,7 @@
+.vscode/**
+
 .env
-chroma_db_gemini/
-faiss_db_gemini/
+vector_db/**
 __pycache__/
 *.pyc
 
