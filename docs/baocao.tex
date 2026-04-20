@@ -1,0 +1,635 @@
+\documentclass[10pt, conference, a4paper, compsocconf]{IEEEtran}
+\usepackage{amsmath,amsxtra,amssymb,amsthm,latexsym,amscd,amsfonts}
+\usepackage[utf8]{vietnam}
+\usepackage[top=2.7cm, bottom=5.4cm, left=2.72cm, right=3.0cm]{geometry}
+\headsep=0.7cm
+\headheight=1.0cm
+\footskip=1.0cm
+\voffset=-0.74cm
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\renewcommand{\sectionmark}[1]{\markright{\MakeUppercase{#1}}{}}
+\renewcommand{\headrulewidth}{0pt}
+\ifCLASSINFOpdf
+\usepackage[pdftex]{graphicx}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\DeclareGraphicsExtensions{.pdf,.jpeg,.png,.jpg}
+\else
+\usepackage[dvips]{graphicx}
+\DeclareGraphicsExtensions{.eps}
+\fi
+\usepackage{array}
+\usepackage{url}
+\usepackage{float}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[caption=false,font=footnotesize]{subfig}
+\lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=fullflexible,frame=single,numbers=left,numberstyle=\tiny,xleftmargin=1.5em,framexleftmargin=1em,showstringspaces=false}
+\makeatletter
+\def\ps@IEEEtitlepagestyle{%
+\def\@oddhead{\centering{\mbox{\footnotesize{\textit{\;\;\;\; Bài tập lớn: Môn Phát triển phần mềm mã nguồn mở -- Đại học Sài Gòn, 5-6/04/2026}}}}}%
+\def\@evenhead{\centering{\mbox{\footnotesize{\textit{\;\;\;\; Bài tập lớn: Môn Phát triển phần mềm mã nguồn mở -- Đại học Sài Gòn, 5-6/04/2026}}}}}%
+\def\@oddfoot{\scriptsize \thepage \hfil }%
+\def\@evenfoot{\scriptsize \hfil \thepage}%
+}
+\makeatother
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+
+
+\begin{document}
+\pagenumbering{arabic}
+\fontsize{10}{12}\selectfont
+\fancyhead[RE,LO]{\centering{\footnotesize{\textit{Bài tập lớn: Môn Phát triển phần mềm mã nguồn mở -- Đại học Sài Gòn, 5-6/04/2026}}}}
+\title{SmartDoc AI - Intelligent Document Q\&A System}
+\author{\IEEEauthorblockN{Nguyễn Hùng Lê Trung\IEEEauthorrefmark{1}, Ngô Quang Trường\IEEEauthorrefmark{2}, Nguyễn Minh Đức\IEEEauthorrefmark{3}}
+\IEEEauthorblockA{Khoa Công nghệ Thông tin, Trường Đại học Sài Gòn\\MSSV: 3122410433, 3122410440, 3122410083\\Giảng viên hướng dẫn: Từ Lãng Phiêu}}
+\maketitle
+\begin{abstract}
+SmartDoc AI là hệ thống hỏi đáp tài liệu thông minh được xây dựng theo kiến trúc Retrieval-Augmented Generation (RAG). Hệ thống cho phép người dùng tải lên nhiều tệp PDF, tự động đọc nội dung, chia nhỏ văn bản thành các đoạn ngữ nghĩa, tạo vector embedding bằng Gemini Embedding API, lưu trữ trong FAISS và truy xuất các đoạn liên quan để cung cấp ngữ cảnh cho mô hình Gemini sinh câu trả lời. Khác với chatbot LLM thuần túy, SmartDoc AI không trả lời dựa hoàn toàn vào tri thức nền của mô hình mà buộc quá trình sinh câu trả lời phải dựa trên tài liệu đã được truy xuất. Dự án được triển khai bằng Python, LangChain, FAISS, Streamlit và Google Generative AI, phù hợp với mục tiêu học tập môn Phát triển phần mềm mã nguồn mở: biết cách tích hợp thư viện mở, thiết kế pipeline AI, đóng gói cấu hình và xây dựng giao diện demo có thể vận hành được. Báo cáo trình bày bối cảnh, cơ sở lý thuyết, kiến trúc hệ thống, chi tiết triển khai, kết quả kiểm thử, hạn chế và định hướng phát triển tiếp theo.
+\end{abstract}
+\begin{IEEEkeywords}
+RAG, LangChain, Gemini, FAISS, Streamlit, Vector Database, PDF Chatbot, Open Source Software.
+\end{IEEEkeywords}
+\IEEEpeerreviewmaketitle
+
+\section{Giới thiệu và công trình liên quan}
+\subsection{Bối cảnh đề tài}
+Trong bối cảnh chuyển đổi số, khối lượng tài liệu điện tử phục vụ học tập, nghiên cứu và vận hành ngày càng lớn. Người dùng thường phải đọc nhiều tệp PDF dài để tìm một thông tin nhỏ, so sánh nhiều đoạn nội dung hoặc tổng hợp ý chính từ nhiều tài liệu. Cách tìm kiếm bằng từ khóa truyền thống tuy đơn giản nhưng có hạn chế: hệ thống chỉ tìm các chuỗi trùng khớp, khó hiểu câu hỏi tự nhiên và khó tổng hợp câu trả lời mạch lạc.
+
+Các mô hình ngôn ngữ lớn (Large Language Models - LLMs) có khả năng sinh câu trả lời tự nhiên, nhưng nếu dùng trực tiếp thì mô hình không biết nội dung riêng trong tài liệu PDF của người dùng. Vì vậy, câu trả lời có thể chung chung, không bám sát tài liệu hoặc xảy ra hiện tượng hallucination. Dự án SmartDoc AI được xây dựng để giải quyết vấn đề này bằng kiến trúc RAG: trước khi sinh câu trả lời, hệ thống truy xuất các đoạn tài liệu liên quan và đưa chúng vào prompt làm ngữ cảnh.
+
+\subsection{Mục tiêu dự án}
+Mục tiêu chính của SmartDoc AI là xây dựng một hệ thống hỏi đáp tài liệu PDF có thể chạy ở mức prototype nhưng có đủ các thành phần cốt lõi của một ứng dụng RAG. Cụ thể:
+\begin{itemize}
+    \item Cho phép người dùng nạp nhiều tệp PDF vào thư mục dữ liệu hoặc upload qua giao diện Streamlit.
+    \item Tự động đọc tài liệu, chia chunk, tạo embedding và lưu vào cơ sở dữ liệu vector FAISS.
+    \item Truy xuất các chunk liên quan nhất với câu hỏi của người dùng bằng semantic search.
+    \item Dùng Gemini để sinh câu trả lời dựa trên context được truy xuất.
+    \item Cung cấp giao diện web đơn giản, có sidebar upload file, cấu hình chunking và vùng chat.
+    \item Thiết kế mã nguồn theo nhiều chế độ chạy: build database, chat terminal, Streamlit app và file minh họa all-in-one.
+\end{itemize}
+
+\subsection{Lý do lựa chọn Gemini thay vì local model}
+Nhóm có thể triển khai chatbot theo hướng chạy local model như Qwen/Ollama hoặc dùng dịch vụ API như Gemini. Trong phạm vi bài tập lớn, nhóm lựa chọn Gemini làm model mặc định vì các lý do chính sau. Thứ nhất, Gemini cung cấp cả mô hình embedding và mô hình chat trong cùng hệ sinh thái Google Generative AI, giúp tích hợp với LangChain đơn giản hơn. Thứ hai, việc dùng API giảm yêu cầu phần cứng, tránh các vấn đề tải model lớn, thiếu RAM hoặc tốc độ suy luận chậm trên máy sinh viên. Thứ ba, chất lượng trả lời của API thường ổn định hơn ở giai đoạn prototype, giúp nhóm tập trung vào pipeline RAG, chunking, retrieval, prompt và giao diện người dùng.
+
+\subsection{Công nghệ liên quan}
+Dự án sử dụng các thư viện và nền tảng chính sau:
+\begin{itemize}
+    \item \textbf{LangChain}: tổ chức pipeline nạp tài liệu, chia chunk, embedding, retriever, prompt và chain sinh câu trả lời.
+    \item \textbf{FAISS}: lưu trữ và tìm kiếm vector embedding theo độ tương đồng.
+    \item \textbf{Google Generative AI}: cung cấp model \verb|gemini-embedding-001| cho embedding và \verb|gemini-2.5-flash-lite| cho generation.
+    \item \textbf{Streamlit}: xây dựng giao diện web nhanh cho demo AI.
+    \item \textbf{Unstructured/PyPDF}: hỗ trợ đọc nội dung tài liệu PDF.
+\end{itemize}
+
+\section{Cơ sở lý thuyết}
+\subsection{Retrieval-Augmented Generation}
+RAG là kiến trúc kết hợp giữa truy xuất thông tin và sinh văn bản. Thay vì gửi trực tiếp câu hỏi đến LLM, hệ thống thực hiện thêm bước tìm kiếm trong kho tài liệu đã được đánh chỉ mục. Các đoạn văn liên quan nhất được đưa vào prompt dưới dạng context, sau đó LLM chỉ được yêu cầu trả lời dựa trên context đó.
+\begin{equation}
+Answer = LLM(Question, Retrieved\ Context)
+\end{equation}
+
+Lợi ích của RAG gồm: giảm hallucination, tăng độ bám sát tài liệu, có khả năng cập nhật tri thức bằng cách thêm tài liệu mới mà không cần huấn luyện lại mô hình, đồng thời phù hợp với các bài toán hỏi đáp tài liệu nội bộ.
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\columnwidth]{rag.jpg}
+    \caption{Minh họa kiến trúc RAG: truy xuất tài liệu trước khi sinh câu trả lời.}
+    \label{fig:rag}
+\end{figure}
+
+\subsection{Embedding và tìm kiếm ngữ nghĩa}
+Text embedding là quá trình biểu diễn văn bản thành vector số. Các đoạn văn có ý nghĩa gần nhau sẽ có vector gần nhau trong không gian embedding. Nhờ đó, hệ thống có thể tìm kiếm theo ngữ nghĩa thay vì chỉ dựa trên từ khóa trùng khớp. Trong SmartDoc AI, cả chunk tài liệu và câu hỏi của người dùng đều được chuyển thành vector bằng \verb|gemini-embedding-001|. Khi người dùng đặt câu hỏi, retriever tìm các vector chunk gần nhất với vector câu hỏi.
+
+\subsection{FAISS Vector Store}
+FAISS là thư viện tìm kiếm tương đồng vector hiệu quả. Trong project, FAISS được dùng làm vector store chính vì dễ tích hợp với LangChain, hỗ trợ lưu index xuống ổ đĩa và phù hợp cho prototype học thuật. Dữ liệu vector được lưu trong thư mục \verb|faiss_db_gemini| và có thể được load lại ở các lần chạy sau.
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=\columnwidth]{distance_strategy.png}
+    \caption{Minh họa ý tưởng so sánh khoảng cách vector trong tìm kiếm ngữ nghĩa.}
+    \label{fig:distance}
+\end{figure}
+
+\subsection{Prompt Engineering trong hệ thống RAG}
+Prompt của SmartDoc AI được thiết kế theo hướng strict assistant. Các luật chính gồm: chỉ dùng context được cung cấp, nếu context không đủ thì trả lời không biết, không dùng kiến thức ngoài, trích nguồn nếu metadata có sẵn và trả lời cùng ngôn ngữ với câu hỏi. Đây là phần quan trọng để kiểm soát hành vi LLM và giảm khả năng bịa nội dung.
+
+\section{Thiết kế hệ thống}
+\subsection{Kiến trúc tổng quan}
+Hệ thống được chia thành bốn lớp chính. Lớp giao diện dùng Streamlit để upload PDF, cấu hình chunk và chat. Lớp ứng dụng điều phối luồng nạp tài liệu, rebuild database, append tài liệu mới và gọi RAG chain. Lớp dữ liệu gồm thư mục \verb|papers| chứa PDF đầu vào và thư mục \verb|faiss_db_gemini| chứa FAISS index. Lớp mô hình gồm Gemini Embedding API và Gemini Chat Model.
+\begin{figure*}[ht]
+    \centering
+    \includegraphics[width=\textwidth]{flowchart.png}
+    \caption{Luồng hoạt động tổng quát của SmartDoc AI từ upload PDF đến trả lời câu hỏi.}
+    \label{fig:flowchart}
+\end{figure*}
+
+\subsection{Luồng xử lý tài liệu}
+Luồng xử lý tài liệu gồm các bước:
+\begin{enumerate}
+    \item Người dùng upload một hoặc nhiều file PDF qua Streamlit hoặc đặt sẵn trong thư mục \verb|papers|.
+    \item Hệ thống dùng \verb|DirectoryLoader| hoặc \verb|UnstructuredFileLoader| để đọc nội dung.
+    \item Văn bản được chia thành các chunk bằng \verb|RecursiveCharacterTextSplitter|.
+    \item Mỗi chunk được chuyển thành vector embedding bằng Gemini Embedding API.
+    \item Nếu FAISS database đã tồn tại, hệ thống append thêm chunk mới; nếu chưa có, hệ thống tạo mới vector store.
+    \item FAISS index được lưu xuống ổ đĩa để tái sử dụng.
+\end{enumerate}
+
+\subsection{Luồng xử lý câu hỏi}
+Khi người dùng nhập câu hỏi, hệ thống load FAISS database, tạo embedding cho câu hỏi, truy xuất tối đa 5 chunk phù hợp theo ngưỡng điểm tương đồng, ghép các chunk thành context, dựng prompt và gọi Gemini để sinh câu trả lời. Trên giao diện Streamlit, câu trả lời được stream dần để tạo trải nghiệm giống chatbot.
+
+\subsection{Các thành phần mã nguồn}
+Repo hiện tại được tổ chức theo các file/module chính như Bảng \ref{tab:files}.
+
+\begin{table}[ht]
+\centering
+\caption{Vai trò các file và module chính trong project}
+\label{tab:files}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|p{6.5cm}|}
+\hline
+\textbf{File/Thư mục} & \textbf{Vai trò} \\ \hline
+\texttt{app.py} & Ứng dụng Streamlit chính. Quản lý upload PDF, cấu hình provider/model, khởi tạo RAG chain, xử lý chat và streaming câu trả lời. \\ \hline
+\texttt{config/settings.py} & Cấu hình ứng dụng (Pydantic Settings). Định nghĩa đường dẫn database, API keys, mô hình mặc định, cấu hình Ollama và LM Studio. \\ \hline
+\texttt{config/prompts.py} & Kho lưu trữ prompt templates. Cung cấp nhiều prompt mode (Strict, Balanced, v.v.) để tuỳ chỉnh hành vi LLM. \\ \hline
+\texttt{core/llm.py} & Factory pattern cho LLM. Khởi tạo LLM từ provider (Gemini, Ollama). Hỗ trợ cấu hình temperature. \\ \hline
+\texttt{core/embeddings.py} & Factory pattern cho Embedding. Khởi tạo embedding model từ provider. Cảnh báo về sự nhất quán giữa build DB và query. \\ \hline
+\texttt{core/retriever.py} & Tạo retriever với \texttt{similarity\_score\_threshold}. Cấu hình số chunk trả về (\texttt{k}) và ngưỡng tương đồng (\texttt{score\_threshold}). \\ \hline
+\texttt{core/vectorstore.py} & Quản lý FAISS vector database. Các hàm: load từ disk, thêm document mới, rebuild toàn bộ database. Định nghĩa chunking strategy. \\ \hline
+\texttt{core/chain.py} & Xây dựng RAG chain dùng LCEL. Ghép retriever + prompt + LLM + output parser thành pipeline. \\ \hline
+\texttt{models/gemini.py} & Giao diện với Google Generative AI (LangChain integration). Cung cấp LLM và Embedding model từ Gemini. \\ \hline
+\texttt{models/ollama.py} & Giao diện với Ollama (local inference). Cung cấp LLM và Embedding model từ Ollama. \\ \hline
+\texttt{ui/sidebar.py} & Render sidebar Streamlit. Cấu hình API key, provider/model, temperature, prompt mode, chunk settings, upload file, quản lý file. \\ \hline
+\texttt{ui/chat\_view.py} & Render vùng chat chính. Hiển thị chat history, input box, streaming response với avatar và model badge. \\ \hline
+\texttt{ui/components.py} & Các UI component tái sử dụng (model badge, status banner, clear button, v.v.). \\ \hline
+\texttt{requirements.txt} & Khai báo thư viện Python cần cài đặt (LangChain, Streamlit, FAISS, Unstructured, v.v.). \\ \hline
+\texttt{.env} & File cấu hình môi trường. Lưu API key, đường dẫn database, cơ chế bật/tắt từng provider. \\ \hline
+\texttt{papers/} & Thư mục tạm lưu PDF được upload từ giao diện. Cơ sở để rebuild database. \\ \hline
+\texttt{vector\_db/} & Thư mục lưu trữ FAISS index. Persistent storage cho vector database đã build. \\ \hline
+\texttt{public/} & Thư mục lưu hình minh họa, sơ đồ kiến trúc dùng trong README và báo cáo. \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+    \subsubsection{Tầng Core (core/)}
+    Tầng \texttt{core/} chứa logic RAG chính, độc lập với Streamlit và cụ thể từng provider. Nó cung cấp:
+    \begin{itemize}
+        \item \textbf{Factory pattern:} Cho phép dễ dàng thay đổi provider (Gemini <= Ollama) mà không sửa code logic.
+        \item \textbf{Modular design:} Mỗi module (LLM, embedding, retriever, chain) độc lập và có thể test riêng.
+        \item \textbf{Reusability:} Có thể dùng core/ trong CLI app, API backend, hoặc UI khác (không chỉ Streamlit).
+    \end{itemize}
+    
+    \subsubsection{Tầng UI (ui/)}
+    Tầng \texttt{ui/} chứa các component Streamlit. Tách biệt khỏi logic RAG để dễ bảo trì và nâng cấp UI.
+    
+    \subsubsection{Tầng Model Adapter (models/)}
+    Tầng \texttt{models/} cung cấp wrapper cho mỗi provider. Giúp giảm coupling và tập trung cấu hình provider tại một nơi.
+    
+
+\section{Triển khai hệ thống}
+\subsection{Cài đặt môi trường}
+Dự án yêu cầu Python 3.12+, kết nối Internet để gọi API (Gemini hoặc Ollama local) và các dependencies trong \verb|requirements.txt|. Các bước cài đặt cơ bản:
+\begin{lstlisting}
+git clone <repo-url>
+cd rag
+python -m venv myenv
+myenv\Scripts\activate                  # Windows
+pip install -r requirements.txt
+streamlit run app.py
+\end{lstlisting}
+
+File \verb|.env| cần khai báo tối thiểu (tuỳ thuộc vào provider sử dụng):
+\begin{lstlisting}
+GOOGLE_API_KEY=your_api_key_here
+
+OLLAMA_BASE_URL=http://localhost:11434
+
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+LMSTUDIO_API_KEY=lm-studio
+
+FAISS_DB_FOLDER_PATH=./vector_db/faiss_db_gemini
+\end{lstlisting}
+
+\subsection{Kiến trúc hệ thống}
+Hệ thống được tổ chức theo mô-đun sau:
+\begin{itemize}
+    \item \texttt{config/}: Quản lý cấu hình (\verb|settings.py|), templates prompt (\verb|prompts.py|).
+    \item \texttt{core/}: Lõi RAG gồm embeddings factory, LLM factory, retriever, vectorstore, và RAG chain builder.
+    \item \texttt{models/}: Giao diện với provider bên ngoài (Gemini, Ollama).
+    \item \texttt{ui/}: Các thành phần giao diện Streamlit (sidebar, chat view, components).
+    \item \texttt{vector\_db/}: Lưu trữ FAISS vector database.
+    \item \texttt{papers/}: Thư mục tạm lưu PDF được upload.
+\end{itemize}
+
+\subsection{Cấu hình chunking}
+Hệ thống sử dụng \texttt{RecursiveCharacterTextSplitter} từ \texttt{langchain-text-splitters} trong phần load tài liệu và thêm file mới. Cấu hình trong \texttt{core/vectorstore.py}:
+\begin{lstlisting}
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1200,
+    chunk_overlap=200,
+    add_start_index=True,
+    strip_whitespace=True,
+    separators=MARKDOWN_SEPARATORS
+)
+\end{lstlisting}
+
+Tham số quan trọng:
+\begin{itemize}
+    \item \verb|chunk_size = 1200|: Kích thước tối đa của mỗi chunk (ký tự).
+    \item \verb|chunk_overlap = 200|: Phần chồng lặp giữa hai chunk liên tiếp để giữ ngữ cảnh.
+    \item \verb|add_start_index = True|: Lưu metadata vị trí bắt đầu, phục vụ dẫn nguồn tài liệu.
+    \item \verb|strip_whitespace = True|: Loại bỏ khoảng trắng thừa.
+    \item \verb|separators = MARKDOWN_SEPARATORS|: Đặt độ ưu tiên split tại tiêu đề Markdown, code blocks, và đoạn.
+\end{itemize}
+
+Các tham số \verb|chunk_size| và \verb|chunk_overlap| có thể điều chỉnh trực tiếp qua giao diện sidebar của Streamlit.
+
+\subsection{Cấu hình embedding và retriever}
+\subsubsection{Factory Pattern cho Embedding}
+Hệ thống sử dụng factory pattern trong \texttt{core/embeddings.py} để hỗ trợ nhiều provider embedding:
+\begin{lstlisting}
+def embedding_factory(
+    provider: Literal["gemini", "ollama"],
+    model: str,
+) -> Embeddings:
+    if provider == "gemini":
+        from models.gemini import get_gemini_embeddings
+        return get_gemini_embeddings(model=model)
+    elif provider == "ollama":
+        from models.ollama import get_ollama_embeddings
+        return get_ollama_embeddings(
+            model=model, base_url=settings.ollama_base_url
+        )
+\end{lstlisting}
+
+\textbf{Lưu ý quan trọng:} Embedding provider/model phải nhất quán giữa lúc build vector database và lúc query. Nếu thay đổi provider hoặc model embedding → cần rebuild toàn bộ database.
+
+\subsubsection{Retriever Configuration}
+Retriever được cấu hình với kiểu \verb|similarity_score_threshold| trong \texttt{core/retriever.py}:
+\begin{lstlisting}
+def get_retriever(
+    vectorstore: FAISS,
+    k: int = 5,
+    score_threshold: float = 0.3,
+) -> VectorStoreRetriever:
+    return vectorstore.as_retriever(
+        search_type="similarity_score_threshold",
+        search_kwargs={"k": k, "score_threshold": score_threshold},
+    )
+\end{lstlisting}
+
+Tham số:
+\begin{itemize}
+    \item \verb|k = 5|: Số lượng chunk tối đa trả về.
+    \item \verb|score_threshold = 0.3|: Ngưỡng tương đồng tối thiểu (0.0--1.0). Chỉ trả về chunk có độ tương đồng $\geq$ 0.3.
+\end{itemize}
+
+\subsection{Cấu hình LLM}
+\subsubsection{Factory Pattern cho LLM}
+Hệ thống sử dụng factory pattern trong \texttt{core/llm.py}:
+\begin{lstlisting}
+def llm_factory(
+    provider: Literal["gemini", "ollama"],
+    model: str,
+    temperature: float = 0.1,
+) -> BaseChatModel:
+    if provider == "gemini":
+        from models.gemini import get_gemini_llm
+        return get_gemini_llm(model=model, temperature=temperature)
+    elif provider == "ollama":
+        from models.ollama import get_ollama_llm
+        return get_ollama_llm(
+            model=model,
+            base_url=settings.ollama_base_url,
+            temperature=temperature,
+        )
+\end{lstlisting}
+
+\subsubsection{Mô hình mặc định}
+Model mặc định có thể cấu hình trong \texttt{.env} hoặc \texttt{config/settings.py}:
+\begin{itemize}
+    \item \textbf{Gemini:} \verb|gemini-2.5-flash-lite| (thông qua \texttt{langchain-google-genai}).
+    \item \textbf{Ollama:} Hỗ trợ các model local như \verb|qwen|, \verb|llama2|, v.v.
+\end{itemize}
+
+Temperature được cấu hình thấp (mặc định 0.1) để tăng độ ổn định câu trả lời. Người dùng có thể điều chỉnh qua slider trong sidebar (0.0 → 1.0).
+
+\subsection{RAG Chain}
+RAG chain được xây dựng sử dụng \textbf{LangChain Expression Language (LCEL)} trong \texttt{core/chain.py}:
+\begin{lstlisting}
+def build_rag_chain(
+    llm: BaseChatModel,
+    retriever: VectorStoreRetriever,
+    prompt: ChatPromptTemplate,
+) -> Runnable:
+    return (
+        {"context": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+\end{lstlisting}
+
+Luồng xử lý:
+\begin{enumerate}
+    \item Input: Câu hỏi người dùng (chuỗi).
+    \item Retriever: Tìm kiếm 5 chunk liên quan nhất từ vector database.
+    \item Prompt: Ghép question + context vào prompt template.
+    \item LLM: Sinh câu trả lời dựa trên context và prompt.
+    \item Output: Chuỗi trả lời (hỗ trợ streaming).
+\end{enumerate}
+
+\subsection{Vector Database}
+Hệ thống sử dụng \textbf{FAISS} (Facebook AI Similarity Search) được quản lý qua \texttt{langchain-community.vectorstores}. Các hàm chính:
+
+\begin{itemize}
+    \item \verb|load_vectorstore(db_path, embeddings)|: Load database từ disk (trả về \verb|None| nếu chưa tồn tại).
+    \item \verb|add_documents_to_db(...)|: Thêm file PDF mới vào database hiện tại (hoặc tạo mới nếu chưa có).
+    \item \verb|rebuild_db(...)|: Xóa database cũ, tải lại tất cả file từ thư mục \verb|./papers| và xây dựng từ đầu.
+\end{itemize}
+
+Đường dẫn database mặc định: \verb|./vector_db/faiss_db_gemini|.
+
+\subsection{Giao diện người dùng}
+Giao diện Streamlit được chia thành hai khu vực chính:
+
+\subsubsection{Sidebar (Quản lý và Cấu hình)}
+Sidebar cung cấp các công cụ sau (trong \texttt{ui/sidebar.py}):
+
+\begin{enumerate}
+    \item \textbf{Google API Key:} Nhập API key Gemini (nếu cần). Key được lưu tạm trong session, không ghi vào file.
+    
+    \item \textbf{LLM Provider \& Model:} Chọn provider (Gemini / Ollama) và model tương ứng. Có thể nhập model tùy chỉnh.
+    
+    \item \textbf{Temperature:} Slider điều chỉnh nhiệt độ LLM (0.0--1.0, mặc định 0.1).
+    
+    \item \textbf{Embedding Provider \& Model:} Chọn provider embedding (Gemini / Ollama) và model. \textbf{Cảnh báo:} Thay đổi embedding model → cần rebuild database.
+    
+    \item \textbf{Prompt Mode:} Chọn template prompt từ \texttt{config/prompts.py}.
+    
+    \item \textbf{Chunk Size \& Overlap:} Slider điều chỉnh \verb|chunk_size| (400--2000) và \verb|chunk_overlap| (0--500).
+    
+    \item \textbf{File Upload:} Upload một hoặc nhiều file PDF. File được lưu vào \verb|./papers| và nhúng vào database.
+    
+    \item \textbf{Quản lý File:} Xem danh sách PDF trong \verb|./papers|, xóa file riêng lẻ hoặc xóa tất cả.
+    
+    \item \textbf{Rebuild Database:} Xóa database cũ, tải lại tất cả PDF từ \verb|./papers| và tạo vector database mới.
+\end{enumerate}
+
+\subsubsection{Vùng Chính (Chat Interface)}
+Vùng chính trong \texttt{ui/chat\_view.py} hiển thị:
+
+\begin{itemize}
+    \item \textbf{Tiêu đề Chatbot:} ``RAG Chatbot'' với biểu tượng robot.
+    
+    \item \textbf{Model Badge:} Hiển thị provider và model LLM hiện tại.
+    
+    \item \textbf{Status Banner:} Thông báo trạng thái (VD: \textit{``Loading database...''}, \textit{``Ready''}).
+    
+    \item \textbf{Chat History:} Danh sách tin nhắn từ trước đó (trong session hiện tại).
+    
+    \item \textbf{Input Box:} Ô nhập câu hỏi. Hỗ trợ Enter để gửi hoặc nút Submit.
+    
+    \item \textbf{Stream Output:} Câu trả lời được stream từng ký tự, tạo hiệu ứng ``đánh máy''.
+    
+    \item \textbf{Clear Chat Button:} Nút xóa lịch sử chat trong session.
+\end{itemize}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{ui-example.png}
+    \caption{Giao diện project}
+    \label{fig:placeholder}
+\end{figure}
+
+\subsection{Luồng sử dụng cơ bản}
+Quy trình sử dụng hệ thống:
+\begin{enumerate}
+    \item \textbf{Khởi động ứng dụng:} \verb|streamlit run app.py|.
+    
+    \item \textbf{Cấu hình (tùy chọn):} Nhập API key, chọn LLM provider/model, embedding provider/model, prompt mode.
+    
+    \item \textbf{Upload PDF:} Kéo thả hoặc chọn file PDF từ sidebar.
+    
+    \item \textbf{Embed Documents:} Ứng dụng tự động chunk, embed và lưu vào FAISS.
+    
+    \item \textbf{Đặt Câu Hỏi:} Nhập câu hỏi trong ô input, nhấn Enter hoặc Submit.
+    
+    \item \textbf{Nhận Câu Trả Lời:} RAG chain truy xuất chunk liên quan, ghép vào prompt, LLM sinh câu trả lời stream.
+    
+    \item \textbf{Xem Lịch Sử:} Chat history được lưu trong \verb|st.session_state.messages|.
+\end{enumerate}
+
+\subsection{Lưu trữ dữ liệu}
+\begin{itemize}
+    \item \textbf{Vector Database (FAISS):} Lưu tại \verb|./vector_db/faiss_db_gemini/|, hỗ trợ persistent storage trên disk.
+    
+    \item \textbf{Chat History:} Lưu tạm trong \verb|st.session_state.messages|, phù hợp với demo. Không bền vững khi refresh.
+    
+    \item \textbf{PDF Files:} Lưu tại \verb|./papers/|.
+    
+    \item \textbf{Config \& Prompts:} Lưu trong mã nguồn (\texttt{config/settings.py}, \texttt{config/prompts.py}).
+\end{itemize}
+
+\textit{Lưu ý:} Để lưu chat history bền vững, cần thêm database backend (VD: SQLite, PostgreSQL, v.v.).
+
+\section{Kiểm thử và đánh giá}
+\subsection{Kết quả đạt được}
+Dựa trên mã nguồn hiện tại, hệ thống đã hoàn thành các chức năng chính trong Bảng \ref{tab:status}.
+\begin{table}[ht]
+\centering
+\caption{Tổng hợp trạng thái chức năng}
+\label{tab:status}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|c|p{5.2cm}|c|}
+\hline
+\textbf{Mã} & \textbf{Chức năng} & \textbf{Trạng thái} \\ \hline
+F01 & Đọc nhiều tài liệu PDF trong thư mục \texttt{papers} & Đạt \\ \hline
+F02 & Chia nhỏ tài liệu thành chunk có overlap & Đạt \\ \hline
+F03 & Tạo embedding bằng Gemini Embedding API & Đạt \\ \hline
+F04 & Lưu và load FAISS vector store & Đạt \\ \hline
+F05 & Chat terminal bằng \texttt{chat.py} & Đạt \\ \hline
+F06 & Giao diện Streamlit upload và chat & Đạt \\ \hline
+F07 & Thêm file mới vào database hiện có & Đạt \\ \hline
+F08 & Rebuild toàn bộ database từ giao diện & Đạt \\ \hline
+F09 & Hiển thị citation rõ ràng theo file/trang & Chưa hoàn chỉnh \\ \hline
+F10 & Lưu lịch sử hội thoại bền vững & Chưa có \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+\subsection{Kịch bản kiểm thử đề xuất}
+Nhóm đề xuất các test case sau để kiểm tra hệ thống trong buổi demo:
+\begin{table}[ht]
+\centering
+\caption{Các kịch bản kiểm thử chức năng}
+\label{tab:testcases}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|c|p{3.4cm}|p{4.6cm}|}
+\hline
+\textbf{TC} & \textbf{Mục tiêu} & \textbf{Kỳ vọng} \\ \hline
+TC01 & Hỏi nội dung có trong PDF & Chatbot trả lời đúng ý chính và bám sát tài liệu. \\ \hline
+TC02 & Hỏi câu cần tổng hợp nhiều đoạn & Retriever lấy nhiều chunk liên quan, LLM tổng hợp thành câu trả lời mạch lạc. \\ \hline
+TC03 & Hỏi ngoài phạm vi tài liệu & Hệ thống trả lời không biết dựa trên tài liệu được cung cấp. \\ \hline
+TC04 & Upload thêm PDF mới & Database được append thêm chunk mới, dữ liệu cũ không mất. \\ \hline
+TC05 & Rebuild toàn bộ database & FAISS được tạo lại từ toàn bộ thư mục \texttt{papers}. \\ \hline
+TC06 & Thay đổi chunk size và overlap & Hệ thống vẫn build và chat bình thường, cho phép quan sát thay đổi chất lượng truy xuất. \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+\subsection{So sánh với hướng tiếp cận khác}
+Bảng \ref{tab:compare} so sánh SmartDoc AI với chatbot LLM thuần và tìm kiếm từ khóa truyền thống.
+\begin{table}[ht]
+\centering
+\caption{So sánh SmartDoc AI với các hướng tiếp cận khác}
+\label{tab:compare}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Tiêu chí} & \textbf{SmartDoc AI} & \textbf{LLM thuần} & \textbf{Keyword search} \\ \hline
+Bám sát tài liệu riêng & Cao & Thấp & Trung bình \\ \hline
+Hiểu ngữ nghĩa câu hỏi & Cao & Cao & Thấp \\ \hline
+Khả năng tổng hợp câu trả lời & Cao & Cao & Thấp \\ \hline
+Kiểm soát hallucination & Tốt hơn & Khó & Tốt nhưng không sinh câu trả lời \\ \hline
+Dễ triển khai prototype & Trung bình & Cao & Cao \\ \hline
+Mở rộng theo dữ liệu mới & Cao & Thấp & Trung bình \\ \hline
+\end{tabular}%
+}
+\end{table}
+
+\subsection{Đánh giá định tính}
+Dự án đạt được ba điểm mạnh chính. Thứ nhất, kiến trúc RAG được hiện thực đầy đủ từ ingestion, embedding, vector store, retriever đến generation. Thứ hai, mã nguồn có tính mô-đun tương đối rõ: \texttt{build\_db.py} dùng cho build database, \texttt{chat.py} dùng cho terminal, \texttt{app.py} dùng cho giao diện web. Thứ ba, ứng dụng phù hợp cho demo học thuật vì người dùng có thể upload PDF, điều chỉnh chunk và đặt câu hỏi trực tiếp.
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=6.3cm,ybar=3pt,bar width=13pt,enlarge x limits=0.2,ylabel={Mức độ hoàn thiện tương đối},xlabel={Nhóm chức năng},ymin=0,ymax=5,xtick={1,2,3,4},xticklabels={Ingestion, Retrieval, UI, Evaluation},ymajorgrids=true,grid style=dashed]
+\addplot[fill=blue!55, draw=blue] coordinates {(1,4.5) (2,4.0) (3,4.0) (4,2.2)};
+\end{axis}
+\end{tikzpicture}
+\caption{Đánh giá định tính mức độ hoàn thiện của các nhóm chức năng.}
+\label{fig:quality}
+\end{figure}
+
+\subsection{Hạn chế hiện tại}
+Phiên bản hiện tại vẫn còn một số hạn chế cần lưu ý:
+\begin{itemize}
+    \item Hệ thống mới hỗ trợ PDF, chưa hỗ trợ DOCX, TXT hoặc ảnh scan cần OCR.
+    \item Citation/source tracking chưa hiển thị đầy đủ trên giao diện; prompt có yêu cầu cite nhưng UI chưa có vùng nguồn rõ ràng.
+    \item Chưa có persistent memory cho hội thoại dài hạn; lịch sử chỉ lưu trong session hiện tại.
+    \item Chưa có hybrid search, BM25 hoặc re-ranking để tăng độ chính xác truy xuất.
+    \item Phụ thuộc vào API key Google và kết nối Internet.
+    \item \texttt{requirements.txt} chưa khai báo \verb|python-dotenv| trong khi mã nguồn có import \verb|load_dotenv|.
+    \item \verb|allow_dangerous_deserialization=True| khi load FAISS cần được kiểm soát cẩn thận nếu triển khai thực tế, chỉ nên load index do hệ thống tự tạo và tin cậy.
+    \item Ngưỡng \verb|score_threshold| giữa \texttt{app.py} và \texttt{chat.py} chưa thống nhất: web dùng 0.3, terminal dùng 0.5.
+\end{itemize}
+
+\subsection{Thời gian nghiên cứu}
+
+\begin{figure}[htbp]
+    \centering % Đặt lệnh căn giữa ở đây (bên ngoài tikzpicture)
+    
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=8.5cm, height=6cm,     % Kích thước khuyến nghị cho 1 cột IEEEtran
+        xlabel={Tuần trong tháng},
+        ylabel={Giờ học},
+        xmin=0.5, xmax=4.5,
+        ymin=0, ymax=7.8,
+        xtick={1,2,3,4},
+        ytick={0,2,4,6},
+        legend style={
+            at={(0.5,1.02)},
+            anchor=south,
+            legend columns=2
+        }
+    ]
+
+    % Đường màu xanh (Thực hành)
+    \addplot[
+        color=blue,
+        mark=*,
+        thick
+    ]
+    coordinates {
+        (1,2) (2,3) (3,6) (4,5)
+    };
+    \addlegendentry{Thực hành}
+
+    % Đường màu đỏ (Lý thuyết)
+    \addplot[
+        color=red,
+        mark=square*,
+        thick
+    ]
+    coordinates {
+        (1,4) (2,5) (3,3) (4,2)
+    };
+    \addlegendentry{Lý thuyết}
+
+    \end{axis}
+    \end{tikzpicture}
+    
+    \caption{Biểu đồ so sánh giờ học lý thuyết và thực hành trung bình của một thành viên nhóm}
+\end{figure}
+Dựa vào Biểu đồ trên, ta có thể quan sát thấy sự thay đổi rõ rệt về trọng tâm phân bổ thời gian trung bình của mỗi thành viên trong nhóm đối với việc nghiên cứu lý thuyết và triển khai thực hành qua từng tuần. Xu hướng này phản ánh chính xác vòng đời phát triển của hệ thống SmartDoc AI:
+
+\begin{itemize}
+    \item \textbf{Giai đoạn nền tảng (Tuần 1 -- Tuần 2):} Trọng tâm nghiên cứu. Thời gian học lý thuyết trung bình mỗi người đạt mức cao (4 giờ/tuần) trong khi thực hành ở mức thấp (2--3 giờ/tuần). Đây là giai đoạn từng thành viên phải tự tập trung nghiên cứu các cơ sở lý thuyết cốt lõi như kiến trúc RAG, phương pháp tạo Vector Embedding, cơ sở dữ liệu FAISS và đọc tài liệu của LangChain, Gemini API. Việc thực hành cá nhân chủ yếu dừng lại ở mức thiết lập môi trường và kiểm thử API nhỏ lẻ.
+    
+    \item \textbf{Giai đoạn bứt phá (Tuần 3):} Trọng tâm lập trình. Sự giao cắt xảy ra khi thời gian thực hành trung bình của mỗi người tăng vọt và đạt đỉnh ở mức 6 giờ/tuần, trong khi thời gian lý thuyết giảm xuống còn 3 giờ/tuần. Lúc này, khi nền tảng kiến thức cá nhân đã vững, các thành viên chia nhau tập trung cao độ vào việc hiện thực hóa mã nguồn: xây dựng các module lõi (\texttt{core/}), thiết lập luồng RAG chain và thiết kế giao diện người dùng bằng Streamlit.
+    
+    \item \textbf{Giai đoạn hoàn thiện (Tuần 4):} Trọng tâm kiểm thử và đóng gói. Thời lượng thực hành trung bình mỗi người vẫn duy trì ở mức cao (5 giờ/tuần) phục vụ cho công tác chạy kiểm tra hệ thống theo các kịch bản (TC01 -- TC06), tinh chỉnh thông số (chunk size, overlap) và sửa lỗi phối hợp. Ngược lại, thời gian lý thuyết giảm xuống mức thấp nhất (2 giờ/tuần) do các thành viên chủ yếu dùng thời gian này để tổng hợp kết quả và đóng góp vào quyển báo cáo chung.
+\end{itemize}
+
+Nhìn chung, xu hướng chéo nhau của hai đường đồ thị cho thấy sự phân công và phân bổ thời gian hợp lý của các thành viên, chuyển dịch thành công từ bước nghiên cứu lý thuyết chuyên sâu sang tập trung lập trình, và kết thúc bằng việc phối hợp kiểm thử, tối ưu hóa sản phẩm.
+
+\section{Hướng dẫn sử dụng}
+\subsection{Chạy bằng giao diện Streamlit}
+Đây là cách khuyến nghị khi demo. Người dùng chạy lệnh \verb|streamlit run app.py|, sau đó upload PDF ở sidebar, chọn thông số chunk và bấm nút gắn file vào database. Khi database đã sẵn sàng, vùng chat sẽ cho phép đặt câu hỏi bằng ngôn ngữ tự nhiên.
+
+Cách này giúp phân biệt rõ bước ingestion/indexing và bước query/answering, phù hợp khi giải thích kiến trúc RAG trước giảng viên.
+
+\subsection{Checklist demo}
+Trước khi demo, nhóm nên kiểm tra:
+\begin{itemize}
+    \item File \verb|.env| đã có \verb|GOOGLE_API_KEY| hợp lệ.
+    \item Đã cài đủ dependency, đặc biệt cần bổ sung \verb|python-dotenv| nếu máy báo thiếu module.
+    \item Thư mục \verb|papers| tồn tại và có ít nhất một PDF mẫu.
+    \item Streamlit chạy được, sidebar upload được file.
+    \item Hỏi thử một câu có trong tài liệu và một câu ngoài tài liệu để chứng minh prompt kiểm soát hallucination.
+\end{itemize}
+
+\section{Định hướng phát triển}
+\subsection{Mở rộng định dạng tài liệu}
+Hướng mở rộng đầu tiên là hỗ trợ thêm DOCX, TXT, Markdown và PDF scan. Với DOCX có thể dùng \verb|Docx2txtLoader| hoặc \verb|UnstructuredWordDocumentLoader|. Với PDF scan cần bổ sung OCR trước khi chunking.
+
+\subsection{Cải thiện citation và giao diện nguồn}
+Hệ thống nên hiển thị rõ tên file, số trang, vị trí \verb|start_index| và đoạn context được dùng để trả lời. Điều này giúp người dùng kiểm chứng lại câu trả lời, tăng độ tin cậy và phù hợp với yêu cầu học thuật.
+
+\subsection{Conversational RAG}
+Phiên bản sau có thể bổ sung memory để hiểu các câu hỏi nối tiếp. Ví dụ, sau khi người dùng hỏi "Tài liệu nói về phương pháp nào?", câu tiếp theo "Ưu điểm của phương pháp đó là gì?" cần được hiểu dựa trên ngữ cảnh hội thoại.
+
+\subsection{Hybrid search và re-ranking}
+Semantic search đôi khi bỏ sót các truy vấn có từ khóa chuyên ngành. Vì vậy, có thể kết hợp FAISS với BM25, sau đó dùng re-ranker để sắp xếp lại top chunk trước khi đưa vào prompt. Đây là hướng nâng cấp quan trọng nếu hệ thống dùng trong môi trường dữ liệu lớn.
+
+\subsection{Đánh giá định lượng}
+Nhóm nên xây dựng tập câu hỏi chuẩn và đo các chỉ số như hit rate, context precision, answer relevance, faithfulness, latency và tỉ lệ câu trả lời ngoài tài liệu. Có thể dùng framework đánh giá RAG như Ragas hoặc tự xây bộ test nhỏ phù hợp với dữ liệu môn học.
+
+\section{Kết luận}
+SmartDoc AI đã xây dựng được một hệ thống hỏi đáp tài liệu theo kiến trúc RAG với các thành phần cốt lõi: đọc PDF, chia chunk, tạo embedding, lưu FAISS, truy xuất context và sinh câu trả lời bằng Gemini. Dự án thể hiện khả năng vận dụng nhiều công nghệ mã nguồn mở trong một ứng dụng AI hoàn chỉnh, đồng thời có giao diện Streamlit thuận tiện cho demo.
+
+Mặc dù còn hạn chế về citation, bộ nhớ hội thoại, đánh giá định lượng và hỗ trợ định dạng tài liệu, dự án là nền tảng tốt để phát triển thành hệ thống hỏi đáp tài liệu hoàn thiện hơn. Với các hướng nâng cấp như hybrid search, re-ranking, OCR, conversational memory và giao diện dẫn nguồn rõ ràng, SmartDoc AI có thể trở thành công cụ hữu ích cho học tập, nghiên cứu và tra cứu tài liệu nội bộ.
+
+\section*{Lời cảm ơn}
+Nhóm xin cảm ơn giảng viên hướng dẫn đã định hướng đề tài và góp ý trong quá trình thực hiện. Nhóm cũng tham khảo tài liệu kỹ thuật của LangChain, FAISS, Google Generative AI và Streamlit để hoàn thiện pipeline RAG trong project.
+
+\begin{thebibliography}{9}
+\bibitem{lewis2020rag} P.~Lewis, E.~Perez, A.~Piktus, F.~Petroni, V.~Karpukhin, N.~Goyal, H.~Kuttler, M.~Lewis, W.~Yih, T.~Rocktaschel, S.~Riedel, and D.~Kiela, \emph{Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks}. NeurIPS, 2020. \url{https://arxiv.org/abs/2005.11401}
+\bibitem{langchain} LangChain, \emph{LangChain Documentation}. \url{https://python.langchain.com/}
+\bibitem{faiss} J.~Johnson, M.~Douze, and H.~Jegou, \emph{Billion-scale similarity search with GPUs}. IEEE Transactions on Big Data, 2019. \url{https://arxiv.org/abs/1702.08734}
+\bibitem{googleai} Google, \emph{Google Generative AI Documentation}. \url{https://ai.google.dev/}
+\bibitem{streamlit} Streamlit, \emph{Streamlit Documentation}. \url{https://docs.streamlit.io/}
+\bibitem{project} Nhóm 4, \emph{Mã nguồn SmartDoc AI - RAG Chatbot với LangChain, Gemini và FAISS}, 2026.
+\end{thebibliography}
+\end{document}
