@@ -122,6 +122,40 @@ def render_sidebar() -> dict:
 
         st.divider()
 
+        # ── CHAIN TYPE ────────────────────────────────────────────────
+        st.subheader("⛓️ Chế độ Chain")
+        chain_type = st.radio(
+            "Loại chain",
+            ["rag", "corag"],
+            format_func=lambda x: "🔗 RAG (1 lần truy xuất)" if x == "rag" else "🔄 CoRAG (nhiều vòng)",
+            horizontal=True,
+            key="chain_type",
+        )
+
+        corag_max_iter = 3
+        if chain_type == "corag":
+            corag_max_iter = st.slider(
+                "Số vòng truy xuất tối đa", 1, 5, 3, key="corag_max_iter",
+                help="CoRAG sẽ lặp tối đa N vòng để bổ sung context trước khi trả lời."
+            )
+
+        st.divider()
+
+        # ── PROMPT & RETRIEVER ────────────────────────────────────────
+        st.subheader("📝 Prompt & Retriever")
+        prompt_mode = st.radio(
+            "Prompt Mode",
+            list(PROMPT_MODES.keys()),
+            key="prompt_mode",
+            horizontal=True,
+        )
+        k = st.slider("Số chunks (k)", 1, 10, 3, key="retriever_k")
+        score_threshold = st.slider(
+            "Ngưỡng tương đồng", 0.0, 1.0, 0.0, 0.05, key="score_threshold"
+        )
+
+        st.divider()
+
         # ── EMBEDDING CONFIG ──────────────────────────────────────────
         st.subheader("🔢 Embedding")
         embed_provider = st.radio(
@@ -147,19 +181,7 @@ def render_sidebar() -> dict:
 
         st.divider()
 
-        # ── PROMPT & RETRIEVER ────────────────────────────────────────
-        with st.expander("📝 Prompt & Retriever"):
-            prompt_mode = st.radio(
-                "Prompt Mode",
-                list(PROMPT_MODES.keys()),
-                key="prompt_mode",
-            )
-            k = st.slider("Số chunks (k)", 1, 10, 5, key="retriever_k")
-            score_threshold = st.slider(
-                "Ngưỡng tương đồng", 0.0, 1.0, 0.3, 0.05, key="score_threshold"
-            )
-
-        st.divider()
+        
 
         # ── FILE UPLOAD ───────────────────────────────────────────────
         st.subheader("📂 Tài liệu")
@@ -215,6 +237,8 @@ def render_sidebar() -> dict:
         "rebuild_triggered": rebuild_triggered,
         "chunk_size": c_size,
         "chunk_overlap": c_overlap,
+        "chain_type": chain_type,
+        "corag_max_iter": corag_max_iter,
     }
 
 

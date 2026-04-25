@@ -1,14 +1,20 @@
 import os
+import warnings
+# Ignore the specific warning regarding __path__ from zoedepth
+warnings.filterwarnings("ignore", message="accessing __path__ from.*zoedepth")
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+
+
 from config import settings, get_prompt
 from core import (
     llm_factory, embedding_factory,
     load_vectorstore, add_documents_to_db, rebuild_db,
-    get_retriever, build_rag_chain,
+    get_retriever, build_rag_chain, CoRAGChain,
 )
 from ui import render_sidebar, render_chat, clear_chat_button, model_badge, status_banner
 
@@ -81,23 +87,31 @@ def get_chain(
     embed_provider, embed_model,
     prompt_mode, retriever_k, score_threshold,
     db_path,
+    chain_type: str = "rag",
+    corag_max_iter: int = 3,
 ):
     embeddings = embedding_factory(embed_provider, embed_model)
     vs = load_vectorstore(db_path, embeddings)
     if vs is None:
-        return None
+        return None, None
     llm = llm_factory(llm_provider, llm_model, temperature)
     retriever = get_retriever(vs, k=retriever_k, score_threshold=score_threshold)
-    prompt = get_prompt(prompt_mode)
-    return build_rag_chain(llm, retriever, prompt)
+    if chain_type == "corag":
+        chain = CoRAGChain(llm=llm, retriever=retriever, prompt_mode=prompt_mode, max_iterations=corag_max_iter)
+    else:
+        from config import get_prompt
+        prompt = get_prompt(prompt_mode)
+        chain = build_rag_chain(llm, retriever, prompt)
+    return chain, retriever
 
 
 # Chỉ build chain nếu provider đang chọn có đủ điều kiện
 llm_ready = _check_provider(cfg["llm_provider"], "chat") if False else True  # lazy — kiểm tra khi chat
 rag_chain = None
+rag_retriever = None
 
 if _gemini_ready() or cfg["llm_provider"] == "ollama":
-    rag_chain = get_chain(
+    _result = get_chain(
         llm_provider=cfg["llm_provider"],
         llm_model=cfg["llm_model"],
         temperature=cfg["temperature"],
@@ -107,7 +121,11 @@ if _gemini_ready() or cfg["llm_provider"] == "ollama":
         retriever_k=cfg["retriever_k"],
         score_threshold=cfg["score_threshold"],
         db_path=settings.faiss_db_folder_path,
+        chain_type=cfg["chain_type"],
+        corag_max_iter=cfg["corag_max_iter"],
     )
+    if _result is not None:
+        rag_chain, rag_retriever = _result
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 col1, col2 = st.columns([5, 1])
@@ -128,7 +146,9 @@ status_banner(db_exists=rag_chain is not None)
 
 # SỬA Ở ĐÂY: Thay sidebar_config thành cfg
 render_chat(
-    rag_chain=rag_chain, 
-    provider=cfg["llm_provider"], 
-    model=cfg["llm_model"]
+    rag_chain=rag_chain,
+    provider=cfg["llm_provider"],
+    model=cfg["llm_model"],
+    retriever=rag_retriever,
+    chain_type=cfg["chain_type"],
 )

@@ -1,6 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 
-# --- Prompt mặc định: nghiêm ngặt, bám sát tài liệu ---
+# ── RAG prompts (single-pass) ──────────────────────────────────────────────────
+
 RAG_STRICT_TEMPLATE = (
     "You are a strict, citation-focused assistant for a private knowledge base.\n"
     "RULES:\n"
@@ -15,7 +16,6 @@ RAG_STRICT_TEMPLATE = (
     "Answer:"
 )
 
-# --- Prompt nhẹ hơn: cho phép model dùng kiến thức nền nhưng ưu tiên tài liệu ---
 RAG_BALANCED_TEMPLATE = (
     "You are a helpful assistant. Use the provided context as your primary source.\n"
     "If the context is insufficient, you may supplement with your general knowledge "

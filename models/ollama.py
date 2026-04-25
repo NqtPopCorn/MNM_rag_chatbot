@@ -2,6 +2,9 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 OLLAMA_LLM_MODELS = [
     "qwen2.5:3b",
+    "gemma4:31b-cloud",
+    "kimi-k2.6:cloud",
+    "qwen3.5:397b-cloud"
 ]
 
 OLLAMA_EMBEDDING_MODELS = [
