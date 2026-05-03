@@ -93,3 +93,6 @@ def rebuild_db(
         return True, f"✅ Build lại hoàn tất với {len(splits)} chunks."
     except Exception as e:
         return False, f"❌ Lỗi: {e}"
+    
+def get_all_documents(vectorstore):
+    return list(vectorstore.docstore._dict.values())

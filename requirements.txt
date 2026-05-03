@@ -8,3 +8,5 @@ unstructured[pdf]
 chromadb
 langchain-google-genai  
 streamlit
+langchain_ollama
+rank_bm25

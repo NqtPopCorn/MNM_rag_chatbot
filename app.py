@@ -1,150 +1,192 @@
+"""
+app.py
+──────
+Main Streamlit entry point for the RAG Chatbot.
+
+Responsibilities:
+  • Page config & session-state initialisation
+  • Render the chat-focused sidebar → receive cfg dict
+  • Build (and cache) the RAG / CoRAG / Self-RAG chain
+  • Render the chat view
+
+Document management (upload, embed, rebuild DB) lives entirely in
+pages/chunk-manager.py. The embedding provider/model used here is
+read directly from `settings` to stay consistent with the DB that
+Chunk Manager built.
+"""
+
+from __future__ import annotations
+
 import os
 import warnings
-# Ignore the specific warning regarding __path__ from zoedepth
+
+from core.hybrid_retriever import HybridRetriever
+from core.vectorstore import get_all_documents
+
 warnings.filterwarnings("ignore", message="accessing __path__ from.*zoedepth")
+
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-
-
-
 from config import settings, get_prompt
 from core import (
-    llm_factory, embedding_factory,
-    load_vectorstore, add_documents_to_db, rebuild_db,
-    get_retriever, build_rag_chain, CoRAGChain,
+    CoRAGChain,
+    SelfRAGChain,
+    build_rag_chain,
+    embedding_factory,
+    get_retriever,
+    llm_factory,
+    load_vectorstore,
 )
-from ui import render_sidebar, render_chat, clear_chat_button, model_badge, status_banner
+from ui import (
+    clear_chat_button,
+    model_badge,
+    render_chat,
+    render_sidebar,
+    status_banner,
+)
 
-UPLOAD_DIR = "./papers"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
+# ── Page setup ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
 
+# Initialise message history once per browser session
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ── SIDEBAR ────────────────────────────────────────────────────────────────────
-cfg = render_sidebar()
 
-# ── GUARD: provider Gemini mà thiếu key → không làm gì cả ────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
 def _gemini_ready() -> bool:
+    """True when a Gemini API key is available in env or session state."""
     return bool(
         st.session_state.get("gemini_api_key_input", "").strip()
         or settings.google_api_key.strip()
     )
 
-def _check_provider(provider: str, action: str) -> bool:
-    if provider == "gemini" and not _gemini_ready():
-        st.error(f"❌ Cần Google API Key để {action} với Gemini.", icon="🔑")
-        return False
-    return True
 
-# ── XỬ LÝ UPLOAD ──────────────────────────────────────────────────────────────
-if cfg["upload_result"] and _check_provider(cfg["embed_provider"], "nhúng tài liệu"):
-    upload = cfg["upload_result"]
-    with st.spinner("Đang xử lý và nhúng file..."):
-        saved_paths = []
-        for f in upload["files"]:
-            path = os.path.join(UPLOAD_DIR, f.name)
-            with open(path, "wb") as fp:
-                fp.write(f.getbuffer())
-            saved_paths.append(path)
+# ── Sidebar ────────────────────────────────────────────────────────────────────
+cfg = render_sidebar()
 
-        embeddings = embedding_factory(cfg["embed_provider"], cfg["embed_model"])
-        ok, msg = add_documents_to_db(
-            file_paths=saved_paths,
-            db_path=settings.faiss_db_folder_path,
-            embeddings=embeddings,
-            chunk_size=cfg["chunk_size"],
-            chunk_overlap=cfg["chunk_overlap"],
-        )
-        st.toast(msg, icon="✅" if ok else "❌")
-        if ok:
-            st.cache_resource.clear()
 
-# ── XỬ LÝ REBUILD ─────────────────────────────────────────────────────────────
-if cfg["rebuild_triggered"] and _check_provider(cfg["embed_provider"], "build DB"):
-    with st.spinner("Đang build lại toàn bộ database..."):
-        embeddings = embedding_factory(cfg["embed_provider"], cfg["embed_model"])
-        ok, msg = rebuild_db(
-            papers_dir=UPLOAD_DIR,
-            db_path=settings.faiss_db_folder_path,
-            embeddings=embeddings,
-            chunk_size=cfg["chunk_size"],
-            chunk_overlap=cfg["chunk_overlap"],
-        )
-        st.toast(msg, icon="✅" if ok else "❌")
-        if ok:
-            st.cache_resource.clear()
-
-# ── BUILD RAG CHAIN ────────────────────────────────────────────────────────────
+# ── Chain factory (cached) ─────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Đang khởi tạo chain...")
 def get_chain(
-    llm_provider, llm_model, temperature,
-    embed_provider, embed_model,
-    prompt_mode, retriever_k, score_threshold,
-    db_path,
-    chain_type: str = "rag",
-    corag_max_iter: int = 3,
+    # LLM knobs — sidebar-driven
+    llm_provider:             str,
+    llm_model:                str,
+    temperature:              float,
+    # Retriever knobs — sidebar-driven
+    prompt_mode:              str,
+    retriever_k:              int,
+    score_threshold:          float,
+    # Chain-type knobs — sidebar-driven
+    chain_type:               str,
+    corag_max_iter:           int,
+    selfrag_max_retrieval:    int,
+    selfrag_max_generation:   int,
+    selfrag_quality_threshold: int,
+    # DB path — from settings (not user-configurable at runtime)
+    db_path:                  str,
+    # Embedding config — from settings, must match how the DB was built
+    embed_provider:           str,
+    embed_model:              str,
 ):
+    """
+    Builds and returns (chain, retriever).
+
+    Why embedding params are sourced from settings, not the sidebar:
+      The FAISS index was built with a specific embedding model (configured in
+      Chunk Manager). Using a different model here would produce vectors in a
+      different space, making retrieval meaningless. By reading from settings
+      we guarantee the same model is always used for both build and query.
+
+    Returns (None, None) when the DB does not exist yet.
+    """
     embeddings = embedding_factory(embed_provider, embed_model)
-    vs = load_vectorstore(db_path, embeddings)
+    vs         = load_vectorstore(db_path, embeddings)
+
     if vs is None:
         return None, None
-    llm = llm_factory(llm_provider, llm_model, temperature)
-    retriever = get_retriever(vs, k=retriever_k, score_threshold=score_threshold)
+
+    llm       = llm_factory(llm_provider, llm_model, temperature)
+    vector_retriever = get_retriever(vs, k=retriever_k, score_threshold=score_threshold)
+    documents = get_all_documents(vs)
+
+    hybrid = HybridRetriever(vector_retriever, documents)
+
     if chain_type == "corag":
-        chain = CoRAGChain(llm=llm, retriever=retriever, prompt_mode=prompt_mode, max_iterations=corag_max_iter)
+        chain = CoRAGChain(
+            llm=llm,
+            retriever=hybrid,
+            prompt_mode=prompt_mode,
+            max_iterations=corag_max_iter,
+        )
+    elif chain_type == "selfrag":
+        chain = SelfRAGChain(
+            llm=llm,
+            retriever=hybrid,
+            prompt_mode=prompt_mode,
+            max_retrieval_attempts=selfrag_max_retrieval,
+            max_generation_attempts=selfrag_max_generation,
+            quality_threshold=selfrag_quality_threshold,
+        )
     else:
-        from config import get_prompt
-        prompt = get_prompt(prompt_mode)
-        chain = build_rag_chain(llm, retriever, prompt)
-    return chain, retriever
+        chain = build_rag_chain(llm, hybrid, get_prompt(prompt_mode))
+
+    return chain, hybrid
 
 
-# Chỉ build chain nếu provider đang chọn có đủ điều kiện
-llm_ready = _check_provider(cfg["llm_provider"], "chat") if False else True  # lazy — kiểm tra khi chat
-rag_chain = None
+# ── Build chain ────────────────────────────────────────────────────────────────
+rag_chain     = None
 rag_retriever = None
 
 if _gemini_ready() or cfg["llm_provider"] == "ollama":
     _result = get_chain(
+        # LLM
         llm_provider=cfg["llm_provider"],
         llm_model=cfg["llm_model"],
         temperature=cfg["temperature"],
-        embed_provider=cfg["embed_provider"],
-        embed_model=cfg["embed_model"],
+        # Retriever
         prompt_mode=cfg["prompt_mode"],
         retriever_k=cfg["retriever_k"],
         score_threshold=cfg["score_threshold"],
-        db_path=settings.faiss_db_folder_path,
+        # Chain type
         chain_type=cfg["chain_type"],
         corag_max_iter=cfg["corag_max_iter"],
+        selfrag_max_retrieval=cfg["selfrag_max_retrieval"],
+        selfrag_max_generation=cfg["selfrag_max_generation"],
+        selfrag_quality_threshold=cfg["selfrag_quality_threshold"],
+        # DB (immutable at chat runtime)
+        db_path=settings.faiss_db_folder_path,
+        # Embedding — sourced from settings, not from cfg
+        embed_provider=settings.default_embedding_provider,
+        embed_model=settings.default_embedding_model,
     )
     if _result is not None:
         rag_chain, rag_retriever = _result
 
-# ── UI ─────────────────────────────────────────────────────────────────────────
-col1, col2 = st.columns([5, 1])
-with col1:
+
+# ── Page layout ────────────────────────────────────────────────────────────────
+col_title, col_clear = st.columns([5, 1])
+with col_title:
     st.title("🤖 RAG Chatbot")
-with col2:
+with col_clear:
     clear_chat_button()
 
 model_badge(cfg["llm_provider"], cfg["llm_model"])
 st.divider()
 
-# Nếu Gemini được chọn mà thiếu key → báo lỗi rõ ràng thay vì crash
+# Guard: Gemini selected but no key entered
 if cfg["llm_provider"] == "gemini" and not _gemini_ready():
     st.warning("🔑 Nhập Google API Key trong sidebar để bắt đầu chat với Gemini.")
     st.stop()
 
+# Guard: DB not built yet
 status_banner(db_exists=rag_chain is not None)
 
-# SỬA Ở ĐÂY: Thay sidebar_config thành cfg
+# ── Chat ───────────────────────────────────────────────────────────────────────
 render_chat(
     rag_chain=rag_chain,
     provider=cfg["llm_provider"],

@@ -3,16 +3,18 @@ import json
 import streamlit as st
 from langchain_core.runnables import Runnable
 
-# Sentinel prefix emitted by CoRAGChain.stream()
-_TRACE_START = "\x00CORAG_TRACE\x00"
-_TRACE_END   = "\x00END\x00"
+# ── Sentinel constants ─────────────────────────────────────────────────────────
+_CORAG_START   = "\x00CORAG_TRACE\x00"
+_CORAG_END     = "\x00END\x00"
+_SELFRAG_START = "\x00SELFRAG_TRACE\x00"
+_SELFRAG_END   = "\x00END\x00"
 
+
+# ── CoRAG trace renderer ───────────────────────────────────────────────────────
 
 def _render_corag_trace(trace: list[dict]):
-    """Render CoRAG iteration trace inside an expander."""
     num = len(trace)
-    label = f"🔄 CoRAG — {num} vòng truy xuất"
-    with st.expander(label, expanded=False):
+    with st.expander(f"🔄 CoRAG — {num} vòng truy xuất", expanded=False):
         for step in trace:
             i = step["iteration"]
             st.markdown(f"**Vòng {i}**")
@@ -28,11 +30,8 @@ def _render_corag_trace(trace: list[dict]):
 
             reasoning = step.get("reasoning", "")
             if reasoning:
-                color = "green" if step.get("sufficient") else "orange"
-                icon  = "✅" if step.get("sufficient") else "🔄"
                 st.markdown(
-                    f"{icon} *{reasoning}*",
-                    help="Đánh giá của LLM về mức độ đủ thông tin",
+                    f"{'✅' if step.get('sufficient') else '🔄'} *{reasoning}*"
                 )
 
             follow_up = step.get("follow_up_query", "")
@@ -43,9 +42,122 @@ def _render_corag_trace(trace: list[dict]):
                 st.divider()
 
 
+# ── Self-RAG trace renderer ────────────────────────────────────────────────────
+
+def _render_selfrag_trace(trace: dict):
+    """Render a full Self-RAG pipeline trace in a structured expander."""
+    if not trace:
+        return
+
+    retrieval_rounds = trace.get("retrieval_rounds", [])
+    gen_attempts     = trace.get("generation_attempts", [])
+    needed           = trace.get("retrieval_needed", True)
+    final_source     = trace.get("final_source", "retrieval")
+    total_relevant   = trace.get("total_relevant_docs", 0)
+
+    # ── Header badge ──────────────────────────────────────────────────────────
+    source_icon = {"retrieval": "📚", "direct": "🧠", "fallback": "⚠️"}.get(final_source, "📚")
+    source_label = {
+        "retrieval": "Từ tài liệu",
+        "direct":    "Kiến thức nền (không cần retrieve)",
+        "fallback":  "Fallback (không tìm được doc liên quan)",
+    }.get(final_source, final_source)
+
+    label = (
+        f"🪞 Self-RAG · {source_icon} {source_label} · "
+        f"{len(retrieval_rounds)} vòng retrieve · "
+        f"{len(gen_attempts)} lần sinh"
+    )
+
+    with st.expander(label, expanded=False):
+
+        # ── Retrieval decision ─────────────────────────────────────────────
+        st.markdown("#### 1️⃣ Quyết định truy xuất")
+        if needed:
+            st.success(
+                f"✅ Cần retrieve — {trace.get('retrieval_reason', '')}",
+                icon="🔍",
+            )
+        else:
+            st.info(
+                f"🧠 Bỏ qua retrieve — {trace.get('retrieval_reason', '')}",
+                icon="💡",
+            )
+
+        # ── Retrieval rounds ───────────────────────────────────────────────
+        if retrieval_rounds:
+            st.divider()
+            st.markdown("#### 2️⃣–3️⃣ Truy xuất & Chấm điểm tài liệu")
+
+            for rnd in retrieval_rounds:
+                rnd_num   = rnd.get("round", "?")
+                query     = rnd.get("query", "")
+                fetched   = rnd.get("docs_fetched", 0)
+                relevant  = rnd.get("docs_relevant", 0)
+                grades    = rnd.get("grades", [])
+                rewrite   = rnd.get("rewrite_reason", "")
+
+                cols = st.columns([3, 1, 1])
+                with cols[0]:
+                    st.markdown(f"**Vòng {rnd_num}** · 🔍 `{query}`")
+                with cols[1]:
+                    st.metric("Tổng fetch", fetched)
+                with cols[2]:
+                    st.metric("Relevant", relevant, delta=None)
+
+                if grades:
+                    for g in grades:
+                        color  = "🟢" if g.get("relevant") else "🔴"
+                        src    = g.get("source", "?")
+                        page   = g.get("page", "—")
+                        reason = g.get("reason", "")
+                        st.markdown(
+                            f"{color} **Doc {g.get('doc_index', '?')+1}** "
+                            f"`{src}` p.{page} — *{reason}*"
+                        )
+
+                if rewrite:
+                    st.warning(f"⟳ Query rewrite: *{rewrite}*", icon="✏️")
+
+                if rnd_num < len(retrieval_rounds):
+                    st.divider()
+
+        # ── Generation attempts ────────────────────────────────────────────
+        if gen_attempts:
+            st.divider()
+            st.markdown("#### 4️⃣–6️⃣ Sinh câu trả lời & Kiểm tra")
+
+            for att in gen_attempts:
+                num        = att.get("attempt", "?")
+                faithful   = att.get("faithful", True)
+                f_reason   = att.get("faithfulness_reason", "")
+                quality    = att.get("quality_score", 0)
+                q_reason   = att.get("quality_reason", "")
+
+                cols = st.columns([1, 2, 1, 2])
+                with cols[0]:
+                    st.markdown(f"**Lần {num}**")
+                with cols[1]:
+                    icon = "✅" if faithful else "❌"
+                    st.markdown(f"{icon} Faithful — *{f_reason}*")
+                with cols[2]:
+                    stars = "⭐" * quality + "☆" * (5 - quality)
+                    st.markdown(f"**{quality}/5** {stars}")
+                with cols[3]:
+                    st.markdown(f"*{q_reason}*")
+
+        # ── Summary ────────────────────────────────────────────────────────
+        st.divider()
+        st.caption(
+            f"📊 Tổng kết: {total_relevant} chunk relevant · "
+            f"{len(retrieval_rounds)} vòng retrieve · "
+            f"{len(gen_attempts)} lần sinh · nguồn: **{final_source}**"
+        )
+
+
+# ── Context doc renderer ───────────────────────────────────────────────────────
 
 def _render_context_docs(docs: list):
-    """Hiển thị các chunk context đã dùng để trả lời trong expander."""
     if not docs:
         return
     with st.expander(f"📚 Context — {len(docs)} chunk đã dùng", expanded=False):
@@ -56,10 +168,10 @@ def _render_context_docs(docs: list):
             if src not in sources_seen:
                 sources_seen.append(src)
 
-        for i, doc in enumerate(docs):
-            meta = doc.metadata or {}
-            src = os.path.basename(meta.get("source", "unknown"))
-            page = meta.get("page", "—")
+        for doc in docs:
+            meta  = doc.metadata or {}
+            src   = os.path.basename(meta.get("source", "unknown"))
+            page  = meta.get("page", "—")
             start = meta.get("start_index", 0)
             color = colors[sources_seen.index(src) % len(colors)] if src in sources_seen else colors[0]
 
@@ -74,9 +186,8 @@ def _render_context_docs(docs: list):
                 f'border-radius:20px;padding:2px 10px;font-size:0.72rem;color:rgba(255,255,255,0.6);'
                 f'font-family:monospace;">Vị trí {start}</span>'
             )
-            content_preview = doc.page_content[:600] + ("…" if len(doc.page_content) > 600 else "")
             import html
-            safe_content = html.escape(content_preview)
+            safe_content = html.escape(doc.page_content[:600] + ("…" if len(doc.page_content) > 600 else ""))
 
             st.markdown(header, unsafe_allow_html=True)
             st.markdown(
@@ -89,34 +200,124 @@ def _render_context_docs(docs: list):
             )
 
 
+# ── Stream helpers ─────────────────────────────────────────────────────────────
+
+def _stream_corag(chain, question: str):
+    """
+    Drive CoRAGChain.stream(), intercept trace marker, return (answer, trace).
+    """
+    trace: list[dict] = []
+    answer_parts: list[str] = []
+    trace_buf = ""
+    in_trace = False
+    placeholder = st.empty()
+
+    for chunk in chain.stream(question):
+        if _CORAG_START in chunk or in_trace:
+            trace_buf += chunk
+            in_trace = True
+            if _CORAG_END in trace_buf:
+                start = trace_buf.index(_CORAG_START) + len(_CORAG_START)
+                end   = trace_buf.index(_CORAG_END)
+                try:
+                    trace = json.loads(trace_buf[start:end])
+                except json.JSONDecodeError:
+                    trace = []
+                num_iter = len(trace)
+                placeholder.markdown(
+                    f"*🔄 Hoàn tất {num_iter} vòng truy xuất — đang sinh câu trả lời...*"
+                )
+                remainder = trace_buf[end + len(_CORAG_END):]
+                if remainder:
+                    answer_parts.append(remainder)
+                    placeholder.markdown("".join(answer_parts) + "▌")
+                in_trace = False
+                trace_buf = ""
+            continue
+        answer_parts.append(chunk)
+        placeholder.markdown("".join(answer_parts) + "▌")
+
+    placeholder.empty()
+    return "".join(answer_parts), trace
+
+
+def _stream_selfrag(chain, question: str):
+    """
+    Drive SelfRAGChain.stream(), intercept trace sentinel, return (answer, trace_dict).
+    """
+    trace: dict = {}
+    answer_parts: list[str] = []
+    trace_buf = ""
+    in_trace = False
+    placeholder = st.empty()
+
+    for chunk in chain.stream(question):
+        if _SELFRAG_START in chunk or in_trace:
+            trace_buf += chunk
+            in_trace = True
+            if _SELFRAG_END in trace_buf:
+                start = trace_buf.index(_SELFRAG_START) + len(_SELFRAG_START)
+                end   = trace_buf.index(_SELFRAG_END)
+                try:
+                    trace = json.loads(trace_buf[start:end])
+                except json.JSONDecodeError:
+                    trace = {}
+
+                # Show status while final answer streams
+                rounds = len(trace.get("retrieval_rounds", []))
+                relevant = trace.get("total_relevant_docs", 0)
+                placeholder.markdown(
+                    f"*🪞 Self-RAG: {rounds} vòng retrieve · "
+                    f"{relevant} chunk relevant — đang sinh câu trả lời...*"
+                )
+
+                remainder = trace_buf[end + len(_SELFRAG_END):]
+                if remainder:
+                    answer_parts.append(remainder)
+                    placeholder.markdown("".join(answer_parts) + "▌")
+                in_trace = False
+                trace_buf = ""
+            continue
+
+        answer_parts.append(chunk)
+        placeholder.markdown("".join(answer_parts) + "▌")
+
+    placeholder.empty()
+    return "".join(answer_parts), trace
+
+
+# ── Main render ────────────────────────────────────────────────────────────────
+
 def render_chat(
     rag_chain,
     provider: str,
     model: str,
-    chain_type: str = "rag",   # "rag" | "corag"
+    chain_type: str = "rag",
     retriever=None,
 ):
-    """Render vùng chat: hiển thị history + xử lý câu hỏi mới."""
-
-    # ── Hiển thị lịch sử ──────────────────────────────────────────────────────
+    # ── History ───────────────────────────────────────────────────────────────
     for msg in st.session_state.messages:
         avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
             if msg["role"] == "assistant" and "model_info" in msg:
-                mode_tag = " · CoRAG" if msg.get("chain_type") == "corag" else ""
+                mode_tag = {
+                    "corag":   " · CoRAG",
+                    "selfrag": " · Self-RAG",
+                }.get(msg.get("chain_type", ""), "")
                 st.caption(f"⚡ **Trả lời bởi:** `{msg['model_info']}`{mode_tag}")
 
-            # Re-render CoRAG trace nếu có
             if msg.get("chain_type") == "corag" and msg.get("trace"):
                 _render_corag_trace(msg["trace"])
 
-            # Re-render context chunks nếu có
+            if msg.get("chain_type") == "selfrag" and msg.get("trace"):
+                _render_selfrag_trace(msg["trace"])
+
             if msg["role"] == "assistant" and msg.get("context_docs"):
                 _render_context_docs(msg["context_docs"])
 
             st.markdown(msg["content"])
 
-    # ── Input mới ─────────────────────────────────────────────────────────────
+    # ── New input ─────────────────────────────────────────────────────────────
     if user_input := st.chat_input("Hỏi gì đó về tài liệu..."):
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user", avatar="🧑‍💻"):
@@ -125,90 +326,46 @@ def render_chat(
         model_info_str = f"{provider.upper()} - {model}"
 
         with st.chat_message("assistant", avatar="🤖"):
-            mode_label = " · CoRAG" if chain_type == "corag" else ""
+            mode_label = {
+                "corag":   " · CoRAG",
+                "selfrag": " · Self-RAG",
+            }.get(chain_type, "")
             st.caption(f"⚡ **Trả lời bởi:** `{model_info_str}`{mode_label}")
 
-            # Lấy context chunks trước khi stream (chỉ với RAG; CoRAG retrieve nội bộ)
             context_docs = []
-            if retriever is not None and chain_type != "corag":
-                with st.spinner("Đang truy xuất context..."):
-                    try:
-                        context_docs = retriever.invoke(user_input)
-                    except Exception:
-                        context_docs = []
+            trace = None
 
             if chain_type == "corag":
                 response, trace = _stream_corag(rag_chain, user_input)
                 _render_corag_trace(trace)
                 st.markdown(response)
-            else:
-                response = st.write_stream(rag_chain.stream(user_input))
-                trace = None
 
-            # Hiển thị context chunks sau câu trả lời
+            elif chain_type == "selfrag":
+                response, trace = _stream_selfrag(rag_chain, user_input)
+                _render_selfrag_trace(trace)
+                st.markdown(response)
+
+            else:
+                # Classic RAG — pull context docs for display
+                if retriever is not None:
+                    with st.spinner("Đang truy xuất context..."):
+                        try:
+                            context_docs = retriever.invoke(user_input)
+                        except Exception:
+                            context_docs = []
+                response = st.write_stream(rag_chain.stream(user_input))
+
             if context_docs:
                 _render_context_docs(context_docs)
 
         st.session_state.messages.append({
-            "role": "assistant",
-            "content": response,
-            "model_info": model_info_str,
-            "chain_type": chain_type,
-            "trace": trace,
+            "role":         "assistant",
+            "content":      response,
+            "model_info":   model_info_str,
+            "chain_type":   chain_type,
+            "trace":        trace,
             "context_docs": context_docs,
         })
-
-
-def _stream_corag(chain, question: str):
-    """
-    Drive CoRAGChain.stream(), intercept the trace marker, collect remaining
-    text into a string, and return (answer_text, trace_list).
-    """
-    trace: list[dict] = []
-    answer_parts: list[str] = []
-    trace_buf = ""
-    in_trace = False
-    answer_placeholder = st.empty()
-
-    for chunk in chain.stream(question):
-        # ── Detect / accumulate trace marker ──────────────────────────────────
-        if _TRACE_START in chunk or in_trace:
-            trace_buf += chunk
-            if not in_trace:
-                in_trace = True
-
-            if _TRACE_END in trace_buf:
-                # Extract JSON between sentinels
-                start = trace_buf.index(_TRACE_START) + len(_TRACE_START)
-                end   = trace_buf.index(_TRACE_END)
-                try:
-                    trace = json.loads(trace_buf[start:end])
-                except json.JSONDecodeError:
-                    trace = []
-
-                # Show a status badge once trace is ready
-                num_iter = len(trace)
-                answer_placeholder.markdown(
-                    f"*🔄 Hoàn tất {num_iter} vòng truy xuất — đang sinh câu trả lời...*"
-                )
-
-                # Remainder after sentinel (might contain first answer tokens)
-                remainder = trace_buf[end + len(_TRACE_END):]
-                if remainder:
-                    answer_parts.append(remainder)
-                    answer_placeholder.markdown("".join(answer_parts) + "▌")
-
-                in_trace = False
-                trace_buf = ""
-            continue
-
-        # ── Normal answer tokens ───────────────────────────────────────────────
-        answer_parts.append(chunk)
-        answer_placeholder.markdown("".join(answer_parts) + "▌")
-
-    final_answer = "".join(answer_parts)
-    answer_placeholder.empty()   # Clear streaming placeholder — caller renders markdown
-    return final_answer, trace
 
 
 def clear_chat_button():
