@@ -59,6 +59,9 @@ _RETRIEVAL_DECISION_TEMPLATE = """\
 You are a routing assistant. Decide whether the question below requires \
 searching a private knowledge base to answer accurately.
 
+Chat History:
+{chat_history}
+
 Question: {question}
 
 Rules:
@@ -74,6 +77,9 @@ Respond ONLY with valid JSON — no markdown fences, no extra text:
 _DOCUMENT_GRADE_TEMPLATE = """\
 You are a strict relevance grader. Assess whether the retrieved document \
 contains information that is DIRECTLY useful for answering the question.
+
+Chat History:
+{chat_history}
 
 Question: {question}
 
@@ -93,6 +99,9 @@ _FAITHFULNESS_TEMPLATE = """\
 You are a faithfulness auditor. Check whether the answer is fully grounded \
 in (supported by) the provided context. Every key claim in the answer must \
 be traceable to the context.
+
+Chat History:
+{chat_history}
 
 Context:
 {context}
@@ -115,6 +124,9 @@ Scoring guide:
   2 — Superficial or largely off-target.
   1 — Does not answer the question or is factually wrong.
 
+Chat History:
+{chat_history}
+
 Question: {question}
 Answer: {answer}
 
@@ -126,6 +138,9 @@ _QUERY_REWRITE_TEMPLATE = """\
 You are a query optimization assistant. The original query failed to retrieve \
 useful documents or produced a low-quality answer. Rewrite the query to be \
 more specific, use different keywords, and better target the relevant information.
+
+Chat History:
+{chat_history}
 
 Original question: {question}
 Previous query used: {previous_query}
@@ -139,6 +154,9 @@ _DIRECT_ANSWER_TEMPLATE = """\
 You are a knowledgeable assistant. Answer the following question using your \
 general knowledge. Be concise and accurate.
 Answer in the SAME language as the question.
+
+Chat History:
+{chat_history}
 
 Question: {question}
 Answer:"""
@@ -154,6 +172,9 @@ RULES:
 4) Cite sources as (source: <filename>, page: <page>) using metadata.
 5) Answer in the SAME language as the question.
 
+Chat History:
+{chat_history}
+
 Context:
 {context}
 
@@ -166,6 +187,9 @@ If context is insufficient, supplement with general knowledge but label it \
 [General knowledge].
 Always cite sources from metadata when using context.
 Answer in the SAME language as the question.
+
+Chat History:
+{chat_history}
 
 Context:
 {context}
@@ -305,14 +329,14 @@ class SelfRAGChain:
 
     # ── Step helpers ─────────────────────────────────────────────────────────
 
-    def _decide_retrieval(self, question: str) -> Tuple[bool, str]:
+    def _decide_retrieval(self, question: str, chat_history: str = "") -> Tuple[bool, str]:
         chain = self._p_decide | self.llm | self._parser
-        raw = chain.invoke({"question": question})
+        raw = chain.invoke({"question": question, "chat_history": chat_history})
         parsed = _extract_json(raw)
         return bool(parsed.get("retrieve", True)), parsed.get("reason", "")
 
     def _grade_documents(
-        self, question: str, docs: List[Document]
+        self, question: str, docs: List[Document], chat_history: str = ""
     ) -> List[Tuple[Document, DocGrade]]:
         chain = self._p_grade | self.llm | self._parser
         results = []
@@ -320,6 +344,7 @@ class SelfRAGChain:
             raw = chain.invoke({
                 "question": question,
                 "document": doc.page_content[:2000],  # cap to save tokens
+                "chat_history": chat_history,
             })
             parsed = _extract_json(raw)
             src, page = _doc_meta(doc)
@@ -333,51 +358,52 @@ class SelfRAGChain:
             results.append((doc, grade))
         return results
 
-    def _check_faithfulness(self, context: str, answer: str) -> Tuple[bool, str]:
+    def _check_faithfulness(self, context: str, answer: str, chat_history: str = "") -> Tuple[bool, str]:
         chain = self._p_faithful | self.llm | self._parser
-        raw = chain.invoke({"context": context, "answer": answer})
+        raw = chain.invoke({"context": context, "answer": answer, "chat_history": chat_history})
         parsed = _extract_json(raw)
         return bool(parsed.get("faithful", True)), parsed.get("reason", "")
 
-    def _score_quality(self, question: str, answer: str) -> Tuple[int, str]:
+    def _score_quality(self, question: str, answer: str, chat_history: str = "") -> Tuple[int, str]:
         chain = self._p_quality | self.llm | self._parser
-        raw = chain.invoke({"question": question, "answer": answer})
+        raw = chain.invoke({"question": question, "answer": answer, "chat_history": chat_history})
         parsed = _extract_json(raw)
         score = int(parsed.get("score", 3))
         return max(1, min(5, score)), parsed.get("reason", "")
 
     def _rewrite_query(
-        self, question: str, previous_query: str, reason: str
+        self, question: str, previous_query: str, reason: str, chat_history: str = ""
     ) -> str:
         chain = self._p_rewrite | self.llm | self._parser
         raw = chain.invoke({
             "question": question,
             "previous_query": previous_query,
             "reason": reason,
+            "chat_history": chat_history,
         })
         parsed = _extract_json(raw)
         return parsed.get("rewritten_query", question)
 
-    def _generate_answer(self, question: str, context: str) -> str:
+    def _generate_answer(self, question: str, context: str, chat_history: str = "") -> str:
         chain = self._p_final | self.llm | self._parser
-        return chain.invoke({"question": question, "context": context})
+        return chain.invoke({"question": question, "context": context, "chat_history": chat_history})
 
-    def _generate_direct(self, question: str) -> str:
+    def _generate_direct(self, question: str, chat_history: str = "") -> str:
         chain = self._p_direct | self.llm | self._parser
-        return chain.invoke({"question": question})
+        return chain.invoke({"question": question, "chat_history": chat_history})
 
-    def _stream_answer(self, question: str, context: str):
+    def _stream_answer(self, question: str, context: str, chat_history: str = ""):
         chain = self._p_final | self.llm | self._parser
-        yield from chain.stream({"question": question, "context": context})
+        yield from chain.stream({"question": question, "context": context, "chat_history": chat_history})
 
-    def _stream_direct(self, question: str):
+    def _stream_direct(self, question: str, chat_history: str = ""):
         chain = self._p_direct | self.llm | self._parser
-        yield from chain.stream({"question": question})
+        yield from chain.stream({"question": question, "chat_history": chat_history})
 
     # ── Core pipeline ────────────────────────────────────────────────────────
 
     def _run_pipeline(
-        self, question: str
+        self, question: str, chat_history: str = ""
     ) -> Tuple[List[Document], SelfRAGTrace, bool]:
         """
         Execute the full Self-RAG pipeline.
@@ -390,7 +416,7 @@ class SelfRAGChain:
         )
 
         # ── Step 1: Retrieval Decision ────────────────────────────────────────
-        retrieve, reason = self._decide_retrieval(question)
+        retrieve, reason = self._decide_retrieval(question, chat_history)
         trace.retrieval_needed = retrieve
         trace.retrieval_reason = reason
 
@@ -406,7 +432,7 @@ class SelfRAGChain:
         for attempt in range(1, self.max_retrieval_attempts + 1):
             raw_docs = self.retriever.invoke(current_query)
 
-            graded = self._grade_documents(question, raw_docs)
+            graded = self._grade_documents(question, raw_docs, chat_history)
 
             round_info = RetrievalRound(
                 round=attempt,
@@ -436,7 +462,7 @@ class SelfRAGChain:
                     "Trying a different query to surface better results."
                 )
                 current_query = self._rewrite_query(
-                    question, current_query, rewrite_reason
+                    question, current_query, rewrite_reason, chat_history
                 )
                 round_info.rewrite_reason = rewrite_reason
 
@@ -453,27 +479,28 @@ class SelfRAGChain:
         relevant_docs: List[Document],
         trace: SelfRAGTrace,
         is_direct: bool,
+        chat_history: str = "",
     ) -> str:
         """
         Run generation + faithfulness + quality loop.
         Returns the final answer string.
         """
         if is_direct:
-            return self._generate_direct(question)
+            return self._generate_direct(question, chat_history)
 
         context = _format_docs(relevant_docs)
 
         for attempt in range(1, self.max_generation_attempts + 1):
-            answer = self._generate_answer(question, context)
+            answer = self._generate_answer(question, context, chat_history)
 
             # ── Step 5: Faithfulness ──────────────────────────────────────────
             if relevant_docs:
-                faithful, faithful_reason = self._check_faithfulness(context, answer)
+                faithful, faithful_reason = self._check_faithfulness(context, answer, chat_history)
             else:
                 faithful, faithful_reason = True, "No context to check."
 
             # ── Step 6: Quality ───────────────────────────────────────────────
-            quality_score, quality_reason = self._score_quality(question, answer)
+            quality_score, quality_reason = self._score_quality(question, answer, chat_history)
 
             gen_attempt = GenerationAttempt(
                 attempt=attempt,
@@ -502,7 +529,7 @@ class SelfRAGChain:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def invoke(self, question: str) -> dict:
+    def invoke(self, question: str, chat_history: str = "") -> dict:
         """
         Returns
         -------
@@ -511,11 +538,11 @@ class SelfRAGChain:
           "trace":  dict  (SelfRAGTrace serialized)
         }
         """
-        relevant_docs, trace, is_direct = self._run_pipeline(question)
-        answer = self._run_generation(question, relevant_docs, trace, is_direct)
+        relevant_docs, trace, is_direct = self._run_pipeline(question, chat_history)
+        answer = self._run_generation(question, relevant_docs, trace, is_direct, chat_history)
         return {"answer": answer, "trace": trace.to_dict()}
 
-    def stream(self, question: str):
+    def stream(self, question: str, chat_history: str = ""):
         """
         Generator compatible with st.write_stream.
 
@@ -524,26 +551,26 @@ class SelfRAGChain:
         1. A sentinel chunk carrying the trace as JSON (ui intercepts & renders it).
         2. Text chunks of the final answer streamed token-by-token.
         """
-        relevant_docs, trace, is_direct = self._run_pipeline(question)
+        relevant_docs, trace, is_direct = self._run_pipeline(question, chat_history)
 
         # Run generation (non-streaming) to get faithfulness / quality grades
         context = _format_docs(relevant_docs)
 
         for attempt in range(1, self.max_generation_attempts + 1):
             if is_direct:
-                answer_for_grading = self._generate_direct(question)
+                answer_for_grading = self._generate_direct(question, chat_history)
             else:
-                answer_for_grading = self._generate_answer(question, context)
+                answer_for_grading = self._generate_answer(question, context, chat_history)
 
             if relevant_docs and not is_direct:
                 faithful, faithful_reason = self._check_faithfulness(
-                    context, answer_for_grading
+                    context, answer_for_grading, chat_history
                 )
             else:
                 faithful, faithful_reason = True, "No context to check."
 
             quality_score, quality_reason = self._score_quality(
-                question, answer_for_grading
+                question, answer_for_grading, chat_history
             )
 
             trace.generation_attempts.append(GenerationAttempt(
@@ -573,6 +600,6 @@ class SelfRAGChain:
 
         # Stream the final answer
         if is_direct:
-            yield from self._stream_direct(question)
+            yield from self._stream_direct(question, chat_history)
         else:
-            yield from self._stream_answer(question, context)
+            yield from self._stream_answer(question, context, chat_history)

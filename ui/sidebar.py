@@ -6,7 +6,7 @@ Chat-focused sidebar. Responsibilities:
   • Chat history navigation (placeholder for multi-session support)
   • LLM provider / model / temperature
   • Chain type selector  (RAG · CoRAG · Self-RAG) + per-chain knobs
-  • Prompt mode + retriever tuning
+  • Prompt mode + retriever tuning (vector vs hybrid)
   • DB status indicator (read-only — management lives in Chunk Manager page)
 
 All document upload, embedding selection, chunk settings, and
@@ -281,7 +281,31 @@ def render_sidebar() -> dict:
 
         st.divider()
 
-        # ── 5. PROMPT & RETRIEVER ─────────────────────────────────────────────
+        # ── 5. MEMORY ─────────────────────────────────────────────────────────
+        st.subheader("🧠 Bộ nhớ ngắn hạn")
+
+        memory_window = st.slider(
+            "Số lượt nhớ (memory window)",
+            min_value=0,
+            max_value=10,
+            value=3,
+            step=1,
+            key="memory_window",
+            help=(
+                "Số lượt hỏi-đáp gần nhất được đưa vào ngữ cảnh hội thoại.\n\n"
+                "**0** = tắt bộ nhớ (mỗi câu hỏi độc lập).\n\n"
+                "Tăng giá trị để chatbot hiểu câu hỏi liên quan đến lượt trước."
+            ),
+        )
+
+        if memory_window == 0:
+            st.caption("🔕 Bộ nhớ đang tắt — mỗi câu hỏi độc lập.")
+        else:
+            st.caption(f"💬 Nhớ **{memory_window}** lượt hỏi-đáp gần nhất.")
+
+        st.divider()
+
+        # ── 6. PROMPT & RETRIEVER ─────────────────────────────────────────────
         st.subheader("📝 Prompt & Retriever")
 
         prompt_mode = st.radio(
@@ -290,6 +314,34 @@ def render_sidebar() -> dict:
             key="prompt_mode",
             horizontal=True,
         )
+
+        # ── Retriever type ────────────────────────────────────────────────────
+        _RETRIEVER_LABELS = {
+            "vector": "🔍 Vector",
+            "hybrid": "⚡ Hybrid (Vector + BM25)",
+        }
+        retriever_type = st.radio(
+            "Retriever",
+            list(_RETRIEVER_LABELS.keys()),
+            format_func=_RETRIEVER_LABELS.get,
+            index=1,          # default: hybrid
+            horizontal=True,
+            key="retriever_type",
+            help=(
+                "**Vector**: tìm kiếm dựa trên embedding (semantic search).\n\n"
+                "**Hybrid**: kết hợp Vector + BM25 (keyword) qua Reciprocal Rank "
+                "Fusion — cân bằng giữa ngữ nghĩa và từ khóa chính xác."
+            ),
+        )
+
+        if retriever_type == "hybrid":
+            st.caption(
+                "⚡ Hybrid dùng Reciprocal Rank Fusion để kết hợp "
+                "semantic search và BM25 keyword search."
+            )
+        else:
+            st.caption("🔍 Vector search thuần túy dựa trên embedding.")
+
         retriever_k = st.slider("Số chunks (k)", 1, 10, 3, key="retriever_k")
         score_threshold = st.slider(
             "Ngưỡng tương đồng", 0.0, 1.0, 0.0, 0.05,
@@ -319,7 +371,9 @@ def render_sidebar() -> dict:
         "selfrag_max_retrieval":      selfrag_max_retrieval,
         "selfrag_max_generation":     selfrag_max_generation,
         "selfrag_quality_threshold":  selfrag_quality_threshold,
+        "memory_window":              memory_window,
         "prompt_mode":                prompt_mode,
+        "retriever_type":             retriever_type,
         "retriever_k":                retriever_k,
         "score_threshold":            score_threshold,
     }

@@ -9,6 +9,37 @@ _CORAG_END     = "\x00END\x00"
 _SELFRAG_START = "\x00SELFRAG_TRACE\x00"
 _SELFRAG_END   = "\x00END\x00"
 
+def _format_history(messages: list, window: int) -> str:
+    if window <= 0:
+        return ""
+
+    pairs = []
+    i = len(messages) - 1
+    while i >= 0 and len(pairs) < window:
+        msg = messages[i]
+        if msg["role"] == "assistant":
+            if i > 0 and messages[i-1]["role"] == "user":
+                pairs.append((messages[i-1]["content"], msg["content"]))
+                i -= 2
+            else:
+                i -= 1
+        elif msg["role"] == "user":
+            pairs.append((msg["content"], ""))
+            i -= 1
+
+    if not pairs:
+        return ""
+
+    lines = ["[Conversation history (most recent last):"]
+    for human, ai in reversed(pairs):
+        human_short = human[:300] + ("…" if len(human) > 300 else "")
+        ai_short    = ai[:300]    + ("…" if len(ai)    > 300 else "")
+        lines.append(f"  Human: {human_short}")
+        if ai:
+            lines.append(f"  AI: {ai_short}")
+    lines.append("]\n")
+    return "\n".join(lines)
+
 
 # ── CoRAG trace renderer ───────────────────────────────────────────────────────
 
@@ -202,7 +233,7 @@ def _render_context_docs(docs: list):
 
 # ── Stream helpers ─────────────────────────────────────────────────────────────
 
-def _stream_corag(chain, question: str):
+def _stream_corag(chain, question: str, chat_history: str = ""):
     """
     Drive CoRAGChain.stream(), intercept trace marker, return (answer, trace).
     """
@@ -212,7 +243,7 @@ def _stream_corag(chain, question: str):
     in_trace = False
     placeholder = st.empty()
 
-    for chunk in chain.stream(question):
+    for chunk in chain.stream(question, chat_history=chat_history):
         if _CORAG_START in chunk or in_trace:
             trace_buf += chunk
             in_trace = True
@@ -241,7 +272,7 @@ def _stream_corag(chain, question: str):
     return "".join(answer_parts), trace
 
 
-def _stream_selfrag(chain, question: str):
+def _stream_selfrag(chain, question: str, chat_history: str = ""):
     """
     Drive SelfRAGChain.stream(), intercept trace sentinel, return (answer, trace_dict).
     """
@@ -251,7 +282,7 @@ def _stream_selfrag(chain, question: str):
     in_trace = False
     placeholder = st.empty()
 
-    for chunk in chain.stream(question):
+    for chunk in chain.stream(question, chat_history=chat_history):
         if _SELFRAG_START in chunk or in_trace:
             trace_buf += chunk
             in_trace = True
@@ -294,6 +325,7 @@ def render_chat(
     model: str,
     chain_type: str = "rag",
     retriever=None,
+    memory_window: int = 3,
 ):
     # ── History ───────────────────────────────────────────────────────────────
     for msg in st.session_state.messages:
@@ -325,6 +357,13 @@ def render_chat(
 
         model_info_str = f"{provider.upper()} - {model}"
 
+        # ── Build context-aware query with short-term memory ───────────────────
+        prior_messages = st.session_state.messages[:-1]
+        history_str    = _format_history(prior_messages, memory_window)
+        turns_used     = min(memory_window, sum(
+            1 for m in prior_messages if m["role"] == "user"
+        ))
+
         with st.chat_message("assistant", avatar="🤖"):
             mode_label = {
                 "corag":   " · CoRAG",
@@ -332,16 +371,22 @@ def render_chat(
             }.get(chain_type, "")
             st.caption(f"⚡ **Trả lời bởi:** `{model_info_str}`{mode_label}")
 
+            # Memory indicator badge
+            if memory_window > 0 and turns_used > 0:
+                st.caption(
+                    f"🧠 Bộ nhớ: đang dùng **{turns_used}** lượt hội thoại gần nhất"
+                )
+
             context_docs = []
             trace = None
 
             if chain_type == "corag":
-                response, trace = _stream_corag(rag_chain, user_input)
+                response, trace = _stream_corag(rag_chain, user_input, chat_history=history_str)
                 _render_corag_trace(trace)
                 st.markdown(response)
 
             elif chain_type == "selfrag":
-                response, trace = _stream_selfrag(rag_chain, user_input)
+                response, trace = _stream_selfrag(rag_chain, user_input, chat_history=history_str)
                 _render_selfrag_trace(trace)
                 st.markdown(response)
 
@@ -353,7 +398,10 @@ def render_chat(
                             context_docs = retriever.invoke(user_input)
                         except Exception:
                             context_docs = []
-                response = st.write_stream(rag_chain.stream(user_input))
+                response = st.write_stream(rag_chain.stream({
+                    "question": user_input,
+                    "chat_history": history_str
+                }))
 
             if context_docs:
                 _render_context_docs(context_docs)

@@ -79,6 +79,7 @@ def get_chain(
     temperature:              float,
     # Retriever knobs — sidebar-driven
     prompt_mode:              str,
+    retriever_type:           str,   # "vector" | "hybrid"
     retriever_k:              int,
     score_threshold:          float,
     # Chain-type knobs — sidebar-driven
@@ -110,32 +111,37 @@ def get_chain(
     if vs is None:
         return None, None
 
-    llm       = llm_factory(llm_provider, llm_model, temperature)
+    llm              = llm_factory(llm_provider, llm_model, temperature)
     vector_retriever = get_retriever(vs, k=retriever_k, score_threshold=score_threshold)
-    documents = get_all_documents(vs)
 
-    hybrid = HybridRetriever(vector_retriever, documents)
+    # ── Choose retriever based on user selection ─────────────────────────
+    if retriever_type == "hybrid":
+        documents = get_all_documents(vs)
+        retriever = HybridRetriever(vector_retriever, documents, k=retriever_k)
+    else:
+        # Pure vector retriever: wrap to expose .invoke() uniformly
+        retriever = vector_retriever
 
     if chain_type == "corag":
         chain = CoRAGChain(
             llm=llm,
-            retriever=hybrid,
+            retriever=retriever,
             prompt_mode=prompt_mode,
             max_iterations=corag_max_iter,
         )
     elif chain_type == "selfrag":
         chain = SelfRAGChain(
             llm=llm,
-            retriever=hybrid,
+            retriever=retriever,
             prompt_mode=prompt_mode,
             max_retrieval_attempts=selfrag_max_retrieval,
             max_generation_attempts=selfrag_max_generation,
             quality_threshold=selfrag_quality_threshold,
         )
     else:
-        chain = build_rag_chain(llm, hybrid, get_prompt(prompt_mode))
+        chain = build_rag_chain(llm, retriever, get_prompt(prompt_mode))
 
-    return chain, hybrid
+    return chain, retriever
 
 
 # ── Build chain ────────────────────────────────────────────────────────────────
@@ -150,6 +156,7 @@ if _gemini_ready() or cfg["llm_provider"] == "ollama":
         temperature=cfg["temperature"],
         # Retriever
         prompt_mode=cfg["prompt_mode"],
+        retriever_type=cfg["retriever_type"],
         retriever_k=cfg["retriever_k"],
         score_threshold=cfg["score_threshold"],
         # Chain type
@@ -193,4 +200,5 @@ render_chat(
     model=cfg["llm_model"],
     retriever=rag_retriever,
     chain_type=cfg["chain_type"],
+    memory_window=cfg["memory_window"],
 )

@@ -30,6 +30,9 @@ from langchain_core.vectorstores import VectorStoreRetriever
 _EVAL_TEMPLATE = """\
 You are a research assistant performing iterative document retrieval.
 
+Chat History:
+{chat_history}
+
 Original question: {question}
 
 Context retrieved so far (iteration {iteration}/{max_iterations}):
@@ -56,6 +59,9 @@ RULES:
 4) Cite sources as (source: <filename>, page: <page>) using metadata when applicable.
 5) Answer in the SAME language as the question.
 
+Chat History:
+{chat_history}
+
 [Retrieved via {num_iterations} CoRAG iteration(s)]
 Context:
 {context}
@@ -68,6 +74,9 @@ You are a helpful assistant. Use the provided context as your primary source.
 If the context is insufficient, you may supplement with general knowledge but label it [General knowledge].
 Always cite sources from metadata when using context.
 Answer in the SAME language as the question.
+
+Chat History:
+{chat_history}
 
 [Retrieved via {num_iterations} CoRAG iteration(s)]
 Context:
@@ -150,6 +159,7 @@ class CoRAGChain:
         question: str,
         context_str: str,
         iteration: int,
+        chat_history: str = "",
     ) -> Tuple[bool, str, str]:
         """Call LLM to check sufficiency. Returns (sufficient, reasoning, follow_up)."""
         chain = self._eval_prompt | self.llm | self._parser
@@ -158,6 +168,7 @@ class CoRAGChain:
             "context": context_str,
             "iteration": iteration,
             "max_iterations": self.max_iterations,
+            "chat_history": chat_history,
         })
         parsed = _extract_json(raw)
         return (
@@ -166,7 +177,7 @@ class CoRAGChain:
             parsed.get("follow_up_query", ""),
         )
 
-    def _run_iterations(self, question: str) -> Tuple[List[Document], List[dict]]:
+    def _run_iterations(self, question: str, chat_history: str = "") -> Tuple[List[Document], List[dict]]:
         """Core iterative retrieval loop. Returns (all_docs, trace)."""
         all_docs: List[Document] = []
         seen: set = set()
@@ -191,7 +202,7 @@ class CoRAGChain:
             # --- Evaluate (skip on last round to save one LLM call) ---
             if iteration < self.max_iterations:
                 sufficient, reasoning, follow_up = self._evaluate(
-                    question, _format_docs(all_docs), iteration
+                    question, _format_docs(all_docs), iteration, chat_history
                 )
                 step["sufficient"] = sufficient
                 step["reasoning"] = reasoning
@@ -211,7 +222,7 @@ class CoRAGChain:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def invoke(self, question: str) -> dict:
+    def invoke(self, question: str, chat_history: str = "") -> dict:
         """
         Returns
         -------
@@ -221,7 +232,7 @@ class CoRAGChain:
                        "sufficient", "reasoning", "follow_up_query"?}, ...]
         }
         """
-        all_docs, trace = self._run_iterations(question)
+        all_docs, trace = self._run_iterations(question, chat_history)
         context_str = _format_docs(all_docs)
 
         answer_chain = self._final_prompt | self.llm | self._parser
@@ -229,10 +240,11 @@ class CoRAGChain:
             "question": question,
             "context": context_str,
             "num_iterations": len(trace),
+            "chat_history": chat_history,
         })
         return {"answer": answer, "trace": trace}
 
-    def stream(self, question: str):
+    def stream(self, question: str, chat_history: str = ""):
         """
         Generator compatible with st.write_stream.
 
@@ -241,7 +253,7 @@ class CoRAGChain:
         • One special marker chunk carrying the trace as JSON (ui strips & renders it)
         • Then text chunks of the final answer (streamed token-by-token)
         """
-        all_docs, trace = self._run_iterations(question)
+        all_docs, trace = self._run_iterations(question, chat_history)
         context_str = _format_docs(all_docs)
 
         # Emit trace marker first — chat_view.py intercepts this
@@ -253,5 +265,6 @@ class CoRAGChain:
             "question": question,
             "context": context_str,
             "num_iterations": len(trace),
+            "chat_history": chat_history,
         }):
             yield chunk
