@@ -5,6 +5,7 @@ from .retriever import get_retriever
 from .chain import build_rag_chain
 from .corag import CoRAGChain
 from .self_rag import SelfRAGChain
+from .memory import HistoryManager, history_manager
 
 __all__ = [
     "llm_factory",
@@ -16,4 +17,6 @@ __all__ = [
     "build_rag_chain",
     "CoRAGChain",
     "SelfRAGChain",
+    "HistoryManager",
+    "history_manager",
 ]

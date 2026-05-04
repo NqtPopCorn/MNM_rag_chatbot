@@ -3,42 +3,13 @@ import json
 import streamlit as st
 from langchain_core.runnables import Runnable
 
+from core.memory import history_manager   # ← replaces the old _format_history
+
 # ── Sentinel constants ─────────────────────────────────────────────────────────
 _CORAG_START   = "\x00CORAG_TRACE\x00"
 _CORAG_END     = "\x00END\x00"
 _SELFRAG_START = "\x00SELFRAG_TRACE\x00"
 _SELFRAG_END   = "\x00END\x00"
-
-def _format_history(messages: list, window: int) -> str:
-    if window <= 0:
-        return ""
-
-    pairs = []
-    i = len(messages) - 1
-    while i >= 0 and len(pairs) < window:
-        msg = messages[i]
-        if msg["role"] == "assistant":
-            if i > 0 and messages[i-1]["role"] == "user":
-                pairs.append((messages[i-1]["content"], msg["content"]))
-                i -= 2
-            else:
-                i -= 1
-        elif msg["role"] == "user":
-            pairs.append((msg["content"], ""))
-            i -= 1
-
-    if not pairs:
-        return ""
-
-    lines = ["[Conversation history (most recent last):"]
-    for human, ai in reversed(pairs):
-        human_short = human[:300] + ("…" if len(human) > 300 else "")
-        ai_short    = ai[:300]    + ("…" if len(ai)    > 300 else "")
-        lines.append(f"  Human: {human_short}")
-        if ai:
-            lines.append(f"  AI: {ai_short}")
-    lines.append("]\n")
-    return "\n".join(lines)
 
 
 # ── CoRAG trace renderer ───────────────────────────────────────────────────────
@@ -76,7 +47,6 @@ def _render_corag_trace(trace: list[dict]):
 # ── Self-RAG trace renderer ────────────────────────────────────────────────────
 
 def _render_selfrag_trace(trace: dict):
-    """Render a full Self-RAG pipeline trace in a structured expander."""
     if not trace:
         return
 
@@ -86,8 +56,7 @@ def _render_selfrag_trace(trace: dict):
     final_source     = trace.get("final_source", "retrieval")
     total_relevant   = trace.get("total_relevant_docs", 0)
 
-    # ── Header badge ──────────────────────────────────────────────────────────
-    source_icon = {"retrieval": "📚", "direct": "🧠", "fallback": "⚠️"}.get(final_source, "📚")
+    source_icon  = {"retrieval": "📚", "direct": "🧠", "fallback": "⚠️"}.get(final_source, "📚")
     source_label = {
         "retrieval": "Từ tài liệu",
         "direct":    "Kiến thức nền (không cần retrieve)",
@@ -101,83 +70,52 @@ def _render_selfrag_trace(trace: dict):
     )
 
     with st.expander(label, expanded=False):
-
-        # ── Retrieval decision ─────────────────────────────────────────────
         st.markdown("#### 1️⃣ Quyết định truy xuất")
         if needed:
-            st.success(
-                f"✅ Cần retrieve — {trace.get('retrieval_reason', '')}",
-                icon="🔍",
-            )
+            st.success(f"✅ Cần retrieve — {trace.get('retrieval_reason', '')}", icon="🔍")
         else:
-            st.info(
-                f"🧠 Bỏ qua retrieve — {trace.get('retrieval_reason', '')}",
-                icon="💡",
-            )
+            st.info(f"🧠 Bỏ qua retrieve — {trace.get('retrieval_reason', '')}", icon="💡")
 
-        # ── Retrieval rounds ───────────────────────────────────────────────
         if retrieval_rounds:
             st.divider()
             st.markdown("#### 2️⃣–3️⃣ Truy xuất & Chấm điểm tài liệu")
-
             for rnd in retrieval_rounds:
-                rnd_num   = rnd.get("round", "?")
-                query     = rnd.get("query", "")
-                fetched   = rnd.get("docs_fetched", 0)
-                relevant  = rnd.get("docs_relevant", 0)
-                grades    = rnd.get("grades", [])
-                rewrite   = rnd.get("rewrite_reason", "")
+                rnd_num  = rnd.get("round", "?")
+                query    = rnd.get("query", "")
+                fetched  = rnd.get("docs_fetched", 0)
+                relevant = rnd.get("docs_relevant", 0)
+                grades   = rnd.get("grades", [])
+                rewrite  = rnd.get("rewrite_reason", "")
 
                 cols = st.columns([3, 1, 1])
-                with cols[0]:
-                    st.markdown(f"**Vòng {rnd_num}** · 🔍 `{query}`")
-                with cols[1]:
-                    st.metric("Tổng fetch", fetched)
-                with cols[2]:
-                    st.metric("Relevant", relevant, delta=None)
+                with cols[0]: st.markdown(f"**Vòng {rnd_num}** · 🔍 `{query}`")
+                with cols[1]: st.metric("Tổng fetch", fetched)
+                with cols[2]: st.metric("Relevant", relevant)
 
-                if grades:
-                    for g in grades:
-                        color  = "🟢" if g.get("relevant") else "🔴"
-                        src    = g.get("source", "?")
-                        page   = g.get("page", "—")
-                        reason = g.get("reason", "")
-                        st.markdown(
-                            f"{color} **Doc {g.get('doc_index', '?')+1}** "
-                            f"`{src}` p.{page} — *{reason}*"
-                        )
+                for g in grades:
+                    color  = "🟢" if g.get("relevant") else "🔴"
+                    st.markdown(
+                        f"{color} **Doc {g.get('doc_index', '?') + 1}** "
+                        f"`{g.get('source', '?')}` p.{g.get('page', '—')} — *{g.get('reason', '')}*"
+                    )
 
                 if rewrite:
                     st.warning(f"⟳ Query rewrite: *{rewrite}*", icon="✏️")
-
                 if rnd_num < len(retrieval_rounds):
                     st.divider()
 
-        # ── Generation attempts ────────────────────────────────────────────
         if gen_attempts:
             st.divider()
             st.markdown("#### 4️⃣–6️⃣ Sinh câu trả lời & Kiểm tra")
-
             for att in gen_attempts:
-                num        = att.get("attempt", "?")
-                faithful   = att.get("faithful", True)
-                f_reason   = att.get("faithfulness_reason", "")
-                quality    = att.get("quality_score", 0)
-                q_reason   = att.get("quality_reason", "")
-
+                faithful = att.get("faithful", True)
+                quality  = att.get("quality_score", 0)
                 cols = st.columns([1, 2, 1, 2])
-                with cols[0]:
-                    st.markdown(f"**Lần {num}**")
-                with cols[1]:
-                    icon = "✅" if faithful else "❌"
-                    st.markdown(f"{icon} Faithful — *{f_reason}*")
-                with cols[2]:
-                    stars = "⭐" * quality + "☆" * (5 - quality)
-                    st.markdown(f"**{quality}/5** {stars}")
-                with cols[3]:
-                    st.markdown(f"*{q_reason}*")
+                with cols[0]: st.markdown(f"**Lần {att.get('attempt', '?')}**")
+                with cols[1]: st.markdown(f"{'✅' if faithful else '❌'} Faithful — *{att.get('faithfulness_reason', '')}*")
+                with cols[2]: st.markdown(f"**{quality}/5** {'⭐' * quality}{'☆' * (5 - quality)}")
+                with cols[3]: st.markdown(f"*{att.get('quality_reason', '')}*")
 
-        # ── Summary ────────────────────────────────────────────────────────
         st.divider()
         st.caption(
             f"📊 Tổng kết: {total_relevant} chunk relevant · "
@@ -200,6 +138,7 @@ def _render_context_docs(docs: list):
                 sources_seen.append(src)
 
         for doc in docs:
+            import html
             meta  = doc.metadata or {}
             src   = os.path.basename(meta.get("source", "unknown"))
             page  = meta.get("page", "—")
@@ -217,9 +156,7 @@ def _render_context_docs(docs: list):
                 f'border-radius:20px;padding:2px 10px;font-size:0.72rem;color:rgba(255,255,255,0.6);'
                 f'font-family:monospace;">Vị trí {start}</span>'
             )
-            import html
             safe_content = html.escape(doc.page_content[:600] + ("…" if len(doc.page_content) > 600 else ""))
-
             st.markdown(header, unsafe_allow_html=True)
             st.markdown(
                 f'<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);'
@@ -234,19 +171,16 @@ def _render_context_docs(docs: list):
 # ── Stream helpers ─────────────────────────────────────────────────────────────
 
 def _stream_corag(chain, question: str, chat_history: str = ""):
-    """
-    Drive CoRAGChain.stream(), intercept trace marker, return (answer, trace).
-    """
     trace: list[dict] = []
     answer_parts: list[str] = []
     trace_buf = ""
-    in_trace = False
+    in_trace  = False
     placeholder = st.empty()
 
     for chunk in chain.stream(question, chat_history=chat_history):
         if _CORAG_START in chunk or in_trace:
             trace_buf += chunk
-            in_trace = True
+            in_trace   = True
             if _CORAG_END in trace_buf:
                 start = trace_buf.index(_CORAG_START) + len(_CORAG_START)
                 end   = trace_buf.index(_CORAG_END)
@@ -254,15 +188,14 @@ def _stream_corag(chain, question: str, chat_history: str = ""):
                     trace = json.loads(trace_buf[start:end])
                 except json.JSONDecodeError:
                     trace = []
-                num_iter = len(trace)
                 placeholder.markdown(
-                    f"*🔄 Hoàn tất {num_iter} vòng truy xuất — đang sinh câu trả lời...*"
+                    f"*🔄 Hoàn tất {len(trace)} vòng truy xuất — đang sinh câu trả lời...*"
                 )
                 remainder = trace_buf[end + len(_CORAG_END):]
                 if remainder:
                     answer_parts.append(remainder)
                     placeholder.markdown("".join(answer_parts) + "▌")
-                in_trace = False
+                in_trace  = False
                 trace_buf = ""
             continue
         answer_parts.append(chunk)
@@ -273,19 +206,16 @@ def _stream_corag(chain, question: str, chat_history: str = ""):
 
 
 def _stream_selfrag(chain, question: str, chat_history: str = ""):
-    """
-    Drive SelfRAGChain.stream(), intercept trace sentinel, return (answer, trace_dict).
-    """
     trace: dict = {}
     answer_parts: list[str] = []
     trace_buf = ""
-    in_trace = False
+    in_trace  = False
     placeholder = st.empty()
 
     for chunk in chain.stream(question, chat_history=chat_history):
         if _SELFRAG_START in chunk or in_trace:
             trace_buf += chunk
-            in_trace = True
+            in_trace   = True
             if _SELFRAG_END in trace_buf:
                 start = trace_buf.index(_SELFRAG_START) + len(_SELFRAG_START)
                 end   = trace_buf.index(_SELFRAG_END)
@@ -293,23 +223,19 @@ def _stream_selfrag(chain, question: str, chat_history: str = ""):
                     trace = json.loads(trace_buf[start:end])
                 except json.JSONDecodeError:
                     trace = {}
-
-                # Show status while final answer streams
-                rounds = len(trace.get("retrieval_rounds", []))
+                rounds   = len(trace.get("retrieval_rounds", []))
                 relevant = trace.get("total_relevant_docs", 0)
                 placeholder.markdown(
                     f"*🪞 Self-RAG: {rounds} vòng retrieve · "
                     f"{relevant} chunk relevant — đang sinh câu trả lời...*"
                 )
-
                 remainder = trace_buf[end + len(_SELFRAG_END):]
                 if remainder:
                     answer_parts.append(remainder)
                     placeholder.markdown("".join(answer_parts) + "▌")
-                in_trace = False
+                in_trace  = False
                 trace_buf = ""
             continue
-
         answer_parts.append(chunk)
         placeholder.markdown("".join(answer_parts) + "▌")
 
@@ -332,18 +258,15 @@ def render_chat(
         avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
             if msg["role"] == "assistant" and "model_info" in msg:
-                mode_tag = {
-                    "corag":   " · CoRAG",
-                    "selfrag": " · Self-RAG",
-                }.get(msg.get("chain_type", ""), "")
+                mode_tag = {"corag": " · CoRAG", "selfrag": " · Self-RAG"}.get(
+                    msg.get("chain_type", ""), ""
+                )
                 st.caption(f"⚡ **Trả lời bởi:** `{msg['model_info']}`{mode_tag}")
 
             if msg.get("chain_type") == "corag" and msg.get("trace"):
                 _render_corag_trace(msg["trace"])
-
             if msg.get("chain_type") == "selfrag" and msg.get("trace"):
                 _render_selfrag_trace(msg["trace"])
-
             if msg["role"] == "assistant" and msg.get("context_docs"):
                 _render_context_docs(msg["context_docs"])
 
@@ -357,28 +280,24 @@ def render_chat(
 
         model_info_str = f"{provider.upper()} - {model}"
 
-        # ── Build context-aware query with short-term memory ───────────────────
+        # ── Build history string via HistoryManager ────────────────────────
+        # Note: contextualization of the query itself happens INSIDE each chain,
+        # not here. This keeps render_chat chain-agnostic.
         prior_messages = st.session_state.messages[:-1]
-        history_str    = _format_history(prior_messages, memory_window)
+        history_str    = history_manager.format(prior_messages, memory_window)
         turns_used     = min(memory_window, sum(
             1 for m in prior_messages if m["role"] == "user"
         ))
 
         with st.chat_message("assistant", avatar="🤖"):
-            mode_label = {
-                "corag":   " · CoRAG",
-                "selfrag": " · Self-RAG",
-            }.get(chain_type, "")
+            mode_label = {"corag": " · CoRAG", "selfrag": " · Self-RAG"}.get(chain_type, "")
             st.caption(f"⚡ **Trả lời bởi:** `{model_info_str}`{mode_label}")
 
-            # Memory indicator badge
             if memory_window > 0 and turns_used > 0:
-                st.caption(
-                    f"🧠 Bộ nhớ: đang dùng **{turns_used}** lượt hội thoại gần nhất"
-                )
+                st.caption(f"🧠 Bộ nhớ: đang dùng **{turns_used}** lượt hội thoại gần nhất")
 
             context_docs = []
-            trace = None
+            trace        = None
 
             if chain_type == "corag":
                 response, trace = _stream_corag(rag_chain, user_input, chat_history=history_str)
@@ -391,7 +310,7 @@ def render_chat(
                 st.markdown(response)
 
             else:
-                # Classic RAG — pull context docs for display
+                # Classic RAG — pull context docs separately for display
                 if retriever is not None:
                     with st.spinner("Đang truy xuất context..."):
                         try:
@@ -399,8 +318,8 @@ def render_chat(
                         except Exception:
                             context_docs = []
                 response = st.write_stream(rag_chain.stream({
-                    "question": user_input,
-                    "chat_history": history_str
+                    "question":     user_input,
+                    "chat_history": history_str,
                 }))
 
             if context_docs:
