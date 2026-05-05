@@ -145,12 +145,17 @@ if cfg["llm_provider"] == "gemini" and not _gemini_ready():
 status_banner(db_exists=rag_chain is not None)
 
 # Thay sidebar_config thành cfg
+
+from core.conversation_store import ConversationStore
+store = ConversationStore("./data/conversations.db")
+
 render_chat(
     rag_chain=rag_chain,
     provider=cfg["llm_provider"],
     model=cfg["llm_model"],
-    llm=llm_factory("ollama", "qwen2.5:3b", temperature=0.1),
+    llm=llm_factory("ollama", "qwen2.5:3b", temperature=0),
     retriever=rag_retriever,
     chain_type=cfg["chain_type"],
     memory_window=cfg["memory_window"],
+    store=store,
 )

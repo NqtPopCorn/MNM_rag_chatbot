@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     lmstudio_api_key: str = "lm-studio"  # LM Studio dùng key giả
 
     # --- Default model ---
-    default_llm_provider: Literal["gemini", "ollama", "lmstudio"] = "gemini"
-    default_llm_model: str = "gemini-2.5-flash-lite"
+    default_llm_provider: Literal["gemini", "ollama", "lmstudio"] = "ollama"
+    default_llm_model: str = "qwen2.5:3b"
     default_embedding_provider: Literal["gemini", "ollama"] = "gemini"
     default_embedding_model: str = "gemini-embedding-001"
 
