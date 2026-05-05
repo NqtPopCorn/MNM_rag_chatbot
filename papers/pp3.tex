@@ -1,0 +1,115 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Gói lệnh hỗ trợ tiếng Việt và định dạng ---
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese]{babel} 
+\usepackage[T5]{fontenc}
+\usepackage{amsmath, amsfonts, amssymb} 
+\usepackage{graphicx} 
+\usepackage{cite} 
+\usepackage{geometry}
+\usepackage{authblk} 
+\usepackage{booktabs} 
+\usepackage{hyperref} 
+
+% --- Cấu hình lề trang ---
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+
+% --- Thông tin bài báo ---
+\title{\textbf{Ứng dụng Mạng Nơ-ron Tích chập (CNN) trong Tự động Nhận diện Bệnh hại trên Lá Lúa qua Hình ảnh Quang học}}
+
+\author[1]{Trần Quang Minh}
+\author[2]{Lê Thị Thanh Thảo}
+\affil[1,2]{Viện Nghiên cứu Trí tuệ Nhân tạo, Đại học Công nghệ}
+\affil[ ]{Email: {minhtq, thaoltt}@vnu.edu.vn}
+
+\date{Ngày 05 tháng 05 năm 2026} 
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Ngành nông nghiệp lúa nước đóng vai trò quan trọng trong an ninh lương thực quốc gia, tuy nhiên các loại bệnh hại như đạo ôn, bạc lá thường xuyên gây thiệt hại lớn về năng suất. Bài báo này đề xuất một giải pháp tự động nhận diện các loại bệnh hại phổ biến trên lá lúa dựa trên kiến trúc mạng nơ-ron tích chập (Convolutional Neural Network - CNN). Chúng tôi thực hiện thử nghiệm trên bộ dữ liệu gồm 5,000 hình ảnh thực địa và ứng dụng kỹ thuật học chuyển đổi (Transfer Learning) với mô hình ResNet50. Kết quả thực nghiệm cho thấy mô hình đạt độ chính xác lên tới 96.5\%, giúp người nông dân có thể phát hiện bệnh sớm thông qua các ứng dụng di động, từ đó giảm thiểu việc sử dụng thuốc bảo vệ thực vật một cách lạm dụng.
+\end{abstract}
+
+\textbf{Từ khóa:} Thị giác máy tính, Mạng nơ-ron tích chập, ResNet50, Nông nghiệp thông minh, Nhận diện bệnh cây trồng.
+
+\section{Đặt vấn đề}
+Việc nhận diện bệnh hại cây trồng theo cách truyền thống chủ yếu dựa vào kinh nghiệm của các chuyên gia nông nghiệp hoặc quan sát thủ công của người nông dân. Phương pháp này không chỉ tốn thời gian mà còn dễ dẫn đến sai sót trong chẩn đoán, dẫn đến việc phun thuốc không đúng loại hoặc không kịp thời.
+
+Với sự phát triển của công nghệ Deep Learning, đặc biệt là các kiến trúc mạng tích chập, máy tính hiện nay đã có khả năng phân loại hình ảnh với độ chính xác vượt xa con người trong một số tác vụ cụ thể. Nghiên cứu này tập trung vào việc tối ưu hóa quy trình xử lý ảnh để phân biệt giữa lá lúa khỏe mạnh và các lá bị bệnh trong điều kiện môi trường thực tế phức tạp.
+
+\section{Dữ liệu và Phương pháp nghiên cứu}
+\subsection{Thu thập và Tiền xử lý dữ liệu}
+Bộ dữ liệu được thu thập từ các cánh đồng tại khu vực Đồng bằng sông Cửu Long bao gồm 4 nhóm chính: 
+\begin{enumerate}
+    \item Lá khỏe mạnh.
+    \item Bệnh Đạo ôn (Blast).
+    \item Bệnh Bạc lá (Bacterial Blight).
+    \item Bệnh Đốm nâu (Brown Spot).
+\end{enumerate}
+
+Để tăng cường độ đa dạng cho mô hình (Data Augmentation), chúng tôi áp dụng các kỹ thuật xoay ảnh, thay đổi độ sáng và lật ngang. Hình ảnh gốc sau đó được chuẩn hóa về kích thước $224 \times 224$ pixel để phù hợp với đầu vào của mạng ResNet.
+
+\subsection{Cơ sở lý thuyết về CNN}
+Mạng nơ-ron tích chập thực hiện các phép tính tích chập để trích xuất các đặc trưng không gian của hình ảnh. Phép toán tích chập tại lớp thứ $l$ được mô tả bởi công thức:
+\begin{equation}
+    x_j^l = f \left( \sum_{i \in M_j} x_i^{l-1} * k_{ij}^l + b_j^l \right)
+\end{equation}
+Trong đó $k_{ij}^l$ là hạt nhân tích chập (kernel), $b_j^l$ là độ chệch và $f$ là hàm kích hoạt phi tuyến (thường là ReLU).
+
+\section{Kiến trúc mô hình đề xuất}
+Chúng tôi lựa chọn kiến trúc ResNet50 (Residual Network) vì khả năng giải quyết vấn đề triệt tiêu đạo hàm thông qua các kết nối tắt (shortcut connections).
+
+Hàm mất mát (Loss Function) được sử dụng là Cross-Entropy đa lớp:
+\begin{equation}
+    L = -\sum_{i=1}^{N} y_i \log(\hat{y}_i)
+\end{equation}
+Trong đó $y_i$ là nhãn thực tế và $\hat{y}_i$ là xác suất dự đoán từ lớp Softmax cuối cùng. Chúng tôi sử dụng thuật toán tối ưu hóa Adam với tốc độ học (learning rate) khởi tạo là $10^{-4}$.
+
+\section{Thực nghiệm và Đánh giá}
+Quá trình huấn luyện được thực hiện trên GPU NVIDIA RTX 4090 trong vòng 50 epoch.
+
+\subsection{Kết quả đạt được}
+Mô hình cho thấy tốc độ hội tụ nhanh sau 20 epoch đầu tiên. Hiệu năng của các kiến trúc khác nhau được so sánh trong Bảng \ref{table:cnn_compare}.
+
+\begin{table}[h]
+\centering
+\caption{Đánh giá hiệu năng của các kiến trúc mạng trên bộ dữ liệu lá lúa}
+\label{table:cnn_compare}
+\vspace{0.3cm}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Kiến trúc} & \textbf{Accuracy (\%)} & \textbf{Precision (\%)} & \textbf{F1-Score (\%)} \\
+\midrule
+VGG16 & 89.2 & 88.5 & 88.8 \\
+MobileNetV2 & 92.4 & 91.8 & 92.1 \\
+\textbf{ResNet50 (Đề xuất)} & \textbf{96.5} & \textbf{96.2} & \textbf{96.3} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Phân tích ma trận nhầm lẫn}
+Qua quan sát ma trận nhầm lẫn (Confusion Matrix), chúng tôi nhận thấy mô hình đôi khi nhầm lẫn giữa Bệnh Đốm nâu và Bệnh Đạo ôn ở giai đoạn đầu do các vết đốm có hình dạng tương đồng. Tuy nhiên, khi kết hợp với thông tin về độ tương phản lớp vỏ, độ chính xác đã được cải thiện đáng kể.
+
+\section{Kết luận và Hướng phát triển}
+Nghiên cứu đã xây dựng thành công mô hình nhận diện bệnh trên lá lúa với độ chính xác cao, đủ tiêu chuẩn để triển khai trên các thiết bị di động hỗ trợ nông dân.
+
+Trong giai đoạn tiếp theo, nhóm nghiên cứu sẽ tập trung vào các hướng sau:
+\begin{itemize}
+    \item Tích hợp mô hình vào ứng dụng Android/iOS để chẩn đoán trực tiếp qua camera.
+    \item Mở rộng bộ dữ liệu cho các loại cây màu và cây ăn quả khác.
+    \item Sử dụng các kiến trúc nhẹ hơn như Tiny-YOLO để phát hiện bệnh trong thời gian thực trên các thiết bị bay không người lái (Drone).
+\end{itemize}
+
+\section*{Lời cảm ơn}
+Nhóm tác giả xin chân thành cảm ơn các cán bộ kỹ thuật tại Trung tâm Khuyến nông khu vực đã hỗ trợ trong quá trình thu thập mẫu vật thực địa.
+
+\begin{thebibliography}{99}
+\bibitem{b1} LeCun, Y., Bengio, Y., \& Hinton, G., "Deep learning", Nature, 2015.
+\bibitem{b2} He, K., Zhang, X., Ren, S., \& Sun, J., "Deep Residual Learning for Image Recognition", CVPR, 2016.
+\bibitem{b3} Nguyễn Thị Z, "Ứng dụng AI trong hiện đại hóa nông nghiệp Việt Nam", Nhà xuất bản Khoa học Kỹ thuật, 2024.
+\end{thebibliography}
+
+\end{document}

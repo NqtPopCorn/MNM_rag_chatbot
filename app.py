@@ -1,14 +1,13 @@
 import os
 import warnings
+
+from core.retriever import build_retriever
 # Ignore the specific warning regarding __path__ from zoedepth
 warnings.filterwarnings("ignore", message="accessing __path__ from.*zoedepth")
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
-
-
-
 
 from config import settings, get_prompt
 from core import (
@@ -21,7 +20,7 @@ from ui import render_sidebar, render_chat, clear_chat_button, model_badge, stat
 UPLOAD_DIR = "./papers"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-st.set_page_config(page_title="RAG Chatbot", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="RAG Chatbot", layout="wide")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -31,14 +30,12 @@ cfg = render_sidebar()
 
 # ── GUARD: provider Gemini mà thiếu key → không làm gì cả ────────────────────
 def _gemini_ready() -> bool:
-    return bool(
-        st.session_state.get("gemini_api_key_input", "").strip()
-        or settings.google_api_key.strip()
-    )
+    # Sidebar đã xóa phần nhập key, nên chỉ kiểm tra key từ settings/env
+    return bool(settings.google_api_key.strip())
 
 def _check_provider(provider: str, action: str) -> bool:
     if provider == "gemini" and not _gemini_ready():
-        st.error(f"❌ Cần Google API Key để {action} với Gemini.", icon="🔑")
+        st.error(f"Cần Google API Key để {action} với Gemini.")
         return False
     return True
 
@@ -61,7 +58,7 @@ if cfg["upload_result"] and _check_provider(cfg["embed_provider"], "nhúng tài 
             chunk_size=cfg["chunk_size"],
             chunk_overlap=cfg["chunk_overlap"],
         )
-        st.toast(msg, icon="✅" if ok else "❌")
+        st.toast(msg)
         if ok:
             st.cache_resource.clear()
 
@@ -76,7 +73,7 @@ if cfg["rebuild_triggered"] and _check_provider(cfg["embed_provider"], "build DB
             chunk_size=cfg["chunk_size"],
             chunk_overlap=cfg["chunk_overlap"],
         )
-        st.toast(msg, icon="✅" if ok else "❌")
+        st.toast(msg)
         if ok:
             st.cache_resource.clear()
 
@@ -85,7 +82,7 @@ if cfg["rebuild_triggered"] and _check_provider(cfg["embed_provider"], "build DB
 def get_chain(
     llm_provider, llm_model, temperature,
     embed_provider, embed_model,
-    prompt_mode, retriever_k, score_threshold,
+    prompt_mode, retriever_type, retriever_k, score_threshold,
     db_path,
     chain_type: str = "rag",
     corag_max_iter: int = 3,
@@ -95,7 +92,9 @@ def get_chain(
     if vs is None:
         return None, None
     llm = llm_factory(llm_provider, llm_model, temperature)
-    retriever = get_retriever(vs, k=retriever_k, score_threshold=score_threshold)
+    
+    retriever = build_retriever(vs, retriever_type, retriever_k, score_threshold)
+    
     if chain_type == "corag":
         chain = CoRAGChain(llm=llm, retriever=retriever, prompt_mode=prompt_mode, max_iterations=corag_max_iter)
     else:
@@ -118,6 +117,7 @@ if _gemini_ready() or cfg["llm_provider"] == "ollama":
         embed_provider=cfg["embed_provider"],
         embed_model=cfg["embed_model"],
         prompt_mode=cfg["prompt_mode"],
+        retriever_type=cfg["retriever_type"],  # Truyền biến retriever_type vào đây
         retriever_k=cfg["retriever_k"],
         score_threshold=cfg["score_threshold"],
         db_path=settings.faiss_db_folder_path,
@@ -130,7 +130,7 @@ if _gemini_ready() or cfg["llm_provider"] == "ollama":
 # ── UI ─────────────────────────────────────────────────────────────────────────
 col1, col2 = st.columns([5, 1])
 with col1:
-    st.title("🤖 RAG Chatbot")
+    st.title("RAG Chatbot")
 with col2:
     clear_chat_button()
 
@@ -139,16 +139,18 @@ st.divider()
 
 # Nếu Gemini được chọn mà thiếu key → báo lỗi rõ ràng thay vì crash
 if cfg["llm_provider"] == "gemini" and not _gemini_ready():
-    st.warning("🔑 Nhập Google API Key trong sidebar để bắt đầu chat với Gemini.")
+    st.warning("Cần cấu hình Google API Key để bắt đầu chat với Gemini (vui lòng kiểm tra cài đặt môi trường).")
     st.stop()
 
 status_banner(db_exists=rag_chain is not None)
 
-# SỬA Ở ĐÂY: Thay sidebar_config thành cfg
+# Thay sidebar_config thành cfg
 render_chat(
     rag_chain=rag_chain,
     provider=cfg["llm_provider"],
     model=cfg["llm_model"],
+    llm=llm_factory("ollama", "qwen2.5:3b", temperature=0.1),
     retriever=rag_retriever,
     chain_type=cfg["chain_type"],
+    memory_window=cfg["memory_window"],
 )

@@ -2,6 +2,7 @@ import os
 import streamlit as st
 from config.settings import settings
 from config.prompts import PROMPT_MODES
+from core.multimodal_loader import LOADER_DISPLAY_NAMES
 from models import (
     GEMINI_LLM_MODELS, GEMINI_EMBEDDING_MODELS,
     OLLAMA_LLM_MODELS, OLLAMA_EMBEDDING_MODELS,
@@ -11,38 +12,22 @@ UPLOAD_DIR = "./papers"
 PROVIDERS = ["gemini", "ollama"]
 
 
-def _has_gemini_key() -> bool:
-    """Kiểm tra API key Gemini — từ .env hoặc nhập tay trong session."""
-    return bool(
-        st.session_state.get("gemini_api_key_input", "").strip()
-        or settings.google_api_key.strip()
-    )
-
-
 def _model_selectbox(label: str, key: str, gemini_models: list, ollama_models: list, provider: str) -> str:
-    gemini_locked = (provider == "gemini") and not _has_gemini_key()
     model_list = gemini_models if provider == "gemini" else ollama_models
 
-    selected = st.selectbox(
-        label,
-        options=model_list,
-        key=key,
-        disabled=gemini_locked,
-        help="Nhập Google API Key bên dưới để chọn model Gemini." if gemini_locked else None,
-    )
+    selected = st.selectbox(label, options=model_list, key=key)
 
     custom = st.text_input(
         "Hoặc nhập model tùy chỉnh",
         value="",
         key=f"{key}_custom",
         placeholder="Bỏ trống để dùng lựa chọn trên",
-        disabled=gemini_locked,
     )
     return custom.strip() if custom.strip() else selected
 
 
 def _papers_manager():
-    """Render phần quản lý file trong thư mục papers."""
+    """Render file list inside the papers folder."""
     with st.expander("🗂️ Quản lý file trong thư mục"):
         existing_files = sorted([
             f for f in os.listdir(UPLOAD_DIR)
@@ -79,24 +64,6 @@ def render_sidebar() -> dict:
 
     with st.sidebar:
 
-        # ── API KEY INPUT ─────────────────────────────────────────────
-        with st.expander("🔑 Google API Key", expanded=not _has_gemini_key()):
-            if settings.google_api_key.strip():
-                st.success("API Key đã được load từ `.env`", icon="✅")
-            else:
-                st.text_input(
-                    "Nhập API Key",
-                    type="password",
-                    key="gemini_api_key_input",
-                    placeholder="AIza...",
-                    help="Chỉ lưu trong session, không ghi vào file.",
-                    on_change=_apply_api_key,
-                )
-                if not _has_gemini_key():
-                    st.caption("Không có key → chỉ dùng được Ollama (local).")
-
-        st.divider()
-
         # ── LLM CONFIG ────────────────────────────────────────────────
         st.subheader("💬 LLM")
         llm_provider = st.radio(
@@ -106,9 +73,6 @@ def render_sidebar() -> dict:
             horizontal=True,
             key="llm_provider",
         )
-
-        if llm_provider == "gemini" and not _has_gemini_key():
-            st.warning("⚠️ Cần API Key để dùng Gemini LLM.", icon="⚠️")
 
         llm_model = _model_selectbox(
             label="Model",
@@ -136,22 +100,60 @@ def render_sidebar() -> dict:
         if chain_type == "corag":
             corag_max_iter = st.slider(
                 "Số vòng truy xuất tối đa", 1, 5, 3, key="corag_max_iter",
-                help="CoRAG sẽ lặp tối đa N vòng để bổ sung context trước khi trả lời."
+                help="CoRAG sẽ lặp tối đa N vòng để bổ sung context trước khi trả lời.",
             )
+
+        st.divider()
+
+        # ── MEMORY ────────────────────────────────────────────────────
+        st.subheader("🧠 Bộ nhớ hội thoại")
+        memory_window = st.slider(
+            "Số lượt nhớ (turns)",
+            min_value=0,
+            max_value=10,
+            value=3,
+            step=1,
+            key="memory_window",
+            help=(
+                "0 = tắt bộ nhớ (mỗi câu hỏi độc lập).\n"
+                "N > 0 = nhớ N lượt hỏi-đáp gần nhất. "
+                "Câu hỏi follow-up sẽ được viết lại thành câu độc lập trước khi truy xuất."
+            ),
+        )
 
         st.divider()
 
         # ── PROMPT & RETRIEVER ────────────────────────────────────────
         st.subheader("📝 Prompt & Retriever")
+
         prompt_mode = st.radio(
             "Prompt Mode",
             list(PROMPT_MODES.keys()),
             key="prompt_mode",
             horizontal=True,
         )
-        k = st.slider("Số chunks (k)", 1, 10, 3, key="retriever_k")
+
+        # Retriever type selector — NEW
+        retriever_type = st.radio(
+            "Retriever",
+            ["vector", "hybrid"],
+            format_func=lambda x: (
+                "🔵 Vector (Semantic)" if x == "vector"
+                else "🟣 Hybrid (BM25 + Vector)"
+            ),
+            horizontal=True,
+            key="retriever_type",
+            help=(
+                "Vector: pure embedding similarity search.\n"
+                "Hybrid: fuses vector + BM25 keyword ranking via Reciprocal Rank Fusion — "
+                "better recall when the question contains specific terms."
+            ),
+        )
+
+        k = st.slider("Số chunks (k)", 1, 10, 5, key="retriever_k")
         score_threshold = st.slider(
-            "Ngưỡng tương đồng", 0.0, 1.0, 0.0, 0.05, key="score_threshold"
+            "Ngưỡng tương đồng", 0.0, 1.0, 0.0, 0.05, key="score_threshold",
+            help="BM25 ignores this threshold (no score); only affects Vector retriever.",
         )
 
         st.divider()
@@ -166,9 +168,6 @@ def render_sidebar() -> dict:
             key="embed_provider",
         )
 
-        if embed_provider == "gemini" and not _has_gemini_key():
-            st.warning("⚠️ Cần API Key để dùng Gemini Embedding.", icon="⚠️")
-
         embed_model = _model_selectbox(
             label="Model",
             key="embed_model",
@@ -181,10 +180,22 @@ def render_sidebar() -> dict:
 
         st.divider()
 
-        
-
         # ── FILE UPLOAD ───────────────────────────────────────────────
         st.subheader("📂 Tài liệu")
+
+        # PDF loader strategy — NEW
+        loader_label = st.radio(
+            "PDF Loader",
+            list(LOADER_DISPLAY_NAMES.keys()),
+            key="pdf_loader_label",
+            help=(
+                "Standard: fast, plain-text extraction (UnstructuredFileLoader).\n"
+                "Enhanced: pymupdf4llm converts pages to Markdown — tables and "
+                "multi-column layouts are preserved correctly."
+            ),
+        )
+        loader_strategy = LOADER_DISPLAY_NAMES[loader_label]
+
         uploaded_files = st.file_uploader(
             "Chọn file PDF", type=["pdf"], accept_multiple_files=True
         )
@@ -193,18 +204,16 @@ def render_sidebar() -> dict:
 
         upload_result = None
         if uploaded_files:
-            can_embed = not (embed_provider == "gemini" and not _has_gemini_key())
             if st.button(
                 "🚀 Thêm vào Database",
                 type="primary",
                 use_container_width=True,
-                disabled=not can_embed,
-                help=None if can_embed else "Cần API Key Gemini để embed với provider này.",
             ):
                 upload_result = {
                     "files": uploaded_files,
                     "chunk_size": c_size,
                     "chunk_overlap": c_overlap,
+                    "loader_strategy": loader_strategy,
                 }
 
         # ── QUẢN LÝ FILE PAPERS ───────────────────────────────────────
@@ -231,6 +240,7 @@ def render_sidebar() -> dict:
         "embed_provider": embed_provider,
         "embed_model": embed_model,
         "prompt_mode": prompt_mode,
+        "retriever_type": retriever_type,
         "retriever_k": k,
         "score_threshold": score_threshold,
         "upload_result": upload_result,
@@ -239,11 +249,6 @@ def render_sidebar() -> dict:
         "chunk_overlap": c_overlap,
         "chain_type": chain_type,
         "corag_max_iter": corag_max_iter,
+        "loader_strategy": loader_strategy,
+        "memory_window": memory_window,
     }
-
-
-def _apply_api_key():
-    """Callback: set GOOGLE_API_KEY vào env khi user nhập tay."""
-    key = st.session_state.get("gemini_api_key_input", "").strip()
-    if key:
-        os.environ["GOOGLE_API_KEY"] = key

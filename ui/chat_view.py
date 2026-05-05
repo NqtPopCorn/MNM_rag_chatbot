@@ -2,6 +2,7 @@ import os
 import json
 import streamlit as st
 from langchain_core.runnables import Runnable
+from core.memory import history_manager
 
 # Sentinel prefix emitted by CoRAGChain.stream()
 _TRACE_START = "\x00CORAG_TRACE\x00"
@@ -28,12 +29,9 @@ def _render_corag_trace(trace: list[dict]):
 
             reasoning = step.get("reasoning", "")
             if reasoning:
-                color = "green" if step.get("sufficient") else "orange"
-                icon  = "✅" if step.get("sufficient") else "🔄"
-                st.markdown(
-                    f"{icon} *{reasoning}*",
-                    help="Đánh giá của LLM về mức độ đủ thông tin",
-                )
+                icon = "✅" if step.get("sufficient") else "🔄"
+                st.markdown(f"{icon} *{reasoning}*",
+                            help="Đánh giá của LLM về mức độ đủ thông tin")
 
             follow_up = step.get("follow_up_query", "")
             if follow_up:
@@ -41,7 +39,6 @@ def _render_corag_trace(trace: list[dict]):
 
             if i < num:
                 st.divider()
-
 
 
 def _render_context_docs(docs: list):
@@ -89,34 +86,58 @@ def _render_context_docs(docs: list):
             )
 
 
+def _render_history_badge(contextualized: str, original: str):
+    """Show a small badge when the query was rewritten by contextualize()."""
+    if contextualized != original:
+        with st.expander("🔁 Câu hỏi đã được viết lại (contextualize)", expanded=False):
+            st.caption(f"**Gốc:** {original}")
+            st.caption(f"**Viết lại:** {contextualized}")
+
+
 def render_chat(
     rag_chain,
     provider: str,
     model: str,
-    chain_type: str = "rag",   # "rag" | "corag"
+    chain_type: str = "rag",
     retriever=None,
+    llm=None,
+    memory_window: int = 3,
 ):
-    """Render vùng chat: hiển thị history + xử lý câu hỏi mới."""
+    """
+    Render the chat area: display history + handle new user input.
 
-    # ── Hiển thị lịch sử ──────────────────────────────────────────────────────
+    Parameters
+    ----------
+    rag_chain      : RAG chain (Runnable) or CoRAGChain instance
+    provider       : LLM provider string (for the caption badge)
+    model          : LLM model string
+    chain_type     : "rag" | "corag"
+    retriever      : used for context-doc retrieval on RAG turns
+    llm            : BaseChatModel — needed for contextualize() LLM call
+    memory_window  : how many past turns to include (0 = disabled)
+    """
+
+    if llm is None:
+        raise ValueError("LLM instance is required for chat rendering (for contextualize function).")
+
+    # ── Display history ────────────────────────────────────────────────────────
     for msg in st.session_state.messages:
         avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
             if msg["role"] == "assistant" and "model_info" in msg:
                 mode_tag = " · CoRAG" if msg.get("chain_type") == "corag" else ""
-                st.caption(f"⚡ **Trả lời bởi:** `{msg['model_info']}`{mode_tag}")
+                mem_tag  = f" · 🧠 {msg.get('memory_window', 0)}t" if msg.get("memory_window", 0) > 0 else ""
+                st.caption(f"⚡ **Trả lời bởi:** `{msg['model_info']}`{mode_tag}{mem_tag}")
 
-            # Re-render CoRAG trace nếu có
             if msg.get("chain_type") == "corag" and msg.get("trace"):
                 _render_corag_trace(msg["trace"])
 
-            # Re-render context chunks nếu có
             if msg["role"] == "assistant" and msg.get("context_docs"):
                 _render_context_docs(msg["context_docs"])
 
             st.markdown(msg["content"])
 
-    # ── Input mới ─────────────────────────────────────────────────────────────
+    # ── New input ──────────────────────────────────────────────────────────────
     if user_input := st.chat_input("Hỏi gì đó về tài liệu..."):
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user", avatar="🧑‍💻"):
@@ -126,26 +147,54 @@ def render_chat(
 
         with st.chat_message("assistant", avatar="🤖"):
             mode_label = " · CoRAG" if chain_type == "corag" else ""
-            st.caption(f"⚡ **Trả lời bởi:** `{model_info_str}`{mode_label}")
+            mem_label  = f" · 🧠 {memory_window}t" if memory_window > 0 else ""
+            st.caption(f"⚡ **Trả lời bởi:** `{model_info_str}`{mode_label}{mem_label}")
 
-            # Lấy context chunks trước khi stream (chỉ với RAG; CoRAG retrieve nội bộ)
+            # ── Build chat history string ──────────────────────────────────────
+            # Exclude the message we just appended (it hasn't been answered yet)
+            prior_messages = st.session_state.messages[:-1]
+            chat_history = history_manager.format(prior_messages, window=memory_window)
+
+            # ── Contextualize question (rewrite follow-ups into standalone) ────
+            contextualized_question = user_input
+            if chat_history and llm is not None:
+                print("Contextualizing question with LLM...")
+                with st.spinner("🔁 Đang phân tích ngữ cảnh hội thoại..."):
+                    contextualized_question = history_manager.contextualize(
+                        question=user_input,
+                        history=chat_history,
+                        llm=llm,
+                    )
+            print(f"Contextualized question: '{contextualized_question}'")
+            _render_history_badge(contextualized_question, user_input)
+
+            # ── Retrieve context docs (RAG only) ──────────────────────────────
             context_docs = []
             if retriever is not None and chain_type != "corag":
                 with st.spinner("Đang truy xuất context..."):
                     try:
-                        context_docs = retriever.invoke(user_input)
+                        context_docs = retriever.invoke(contextualized_question)
                     except Exception:
                         context_docs = []
 
+            # ── Run chain ─────────────────────────────────────────────────────
             if chain_type == "corag":
-                response, trace = _stream_corag(rag_chain, user_input)
+                response, trace = _stream_corag(
+                    rag_chain,
+                    question=contextualized_question,
+                    chat_history=chat_history,
+                )
                 _render_corag_trace(trace)
                 st.markdown(response)
             else:
-                response = st.write_stream(rag_chain.stream(user_input))
+                response = st.write_stream(
+                    rag_chain.stream({
+                        "question": contextualized_question,
+                        "chat_history": chat_history,
+                    })
+                )
                 trace = None
 
-            # Hiển thị context chunks sau câu trả lời
             if context_docs:
                 _render_context_docs(context_docs)
 
@@ -156,10 +205,11 @@ def render_chat(
             "chain_type": chain_type,
             "trace": trace,
             "context_docs": context_docs,
+            "memory_window": memory_window,
         })
 
 
-def _stream_corag(chain, question: str):
+def _stream_corag(chain, question: str, chat_history: str = ""):
     """
     Drive CoRAGChain.stream(), intercept the trace marker, collect remaining
     text into a string, and return (answer_text, trace_list).
@@ -170,15 +220,13 @@ def _stream_corag(chain, question: str):
     in_trace = False
     answer_placeholder = st.empty()
 
-    for chunk in chain.stream(question):
-        # ── Detect / accumulate trace marker ──────────────────────────────────
+    for chunk in chain.stream(question, chat_history):
         if _TRACE_START in chunk or in_trace:
             trace_buf += chunk
             if not in_trace:
                 in_trace = True
 
             if _TRACE_END in trace_buf:
-                # Extract JSON between sentinels
                 start = trace_buf.index(_TRACE_START) + len(_TRACE_START)
                 end   = trace_buf.index(_TRACE_END)
                 try:
@@ -186,13 +234,11 @@ def _stream_corag(chain, question: str):
                 except json.JSONDecodeError:
                     trace = []
 
-                # Show a status badge once trace is ready
                 num_iter = len(trace)
                 answer_placeholder.markdown(
                     f"*🔄 Hoàn tất {num_iter} vòng truy xuất — đang sinh câu trả lời...*"
                 )
 
-                # Remainder after sentinel (might contain first answer tokens)
                 remainder = trace_buf[end + len(_TRACE_END):]
                 if remainder:
                     answer_parts.append(remainder)
@@ -202,12 +248,11 @@ def _stream_corag(chain, question: str):
                 trace_buf = ""
             continue
 
-        # ── Normal answer tokens ───────────────────────────────────────────────
         answer_parts.append(chunk)
         answer_placeholder.markdown("".join(answer_parts) + "▌")
 
     final_answer = "".join(answer_parts)
-    answer_placeholder.empty()   # Clear streaming placeholder — caller renders markdown
+    answer_placeholder.empty()
     return final_answer, trace
 
 
